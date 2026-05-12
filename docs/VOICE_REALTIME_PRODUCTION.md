@@ -1,5 +1,7 @@
 # Real-time AI voice with real callers (production-style guide)
 
+**Twilio inbound + IVR + webhooks + env:** see **[TWILIO_VOICE_INBOUND_PRODUCTION.md](./TWILIO_VOICE_INBOUND_PRODUCTION.md)**. Copy **`/.env.example`** to `.env.local` for a safe variable checklist (do not commit secrets).
+
 This document explains how to go from **simulator / mock** to **real users on the phone**, using Twilio + this Next.js app + Gemini + your product REST API.
 
 ---

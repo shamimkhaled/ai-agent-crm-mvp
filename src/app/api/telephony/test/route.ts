@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
+import { httpsGetJson } from "@/lib/telephony/carrierHttps";
 
 export const dynamic = "force-dynamic";
+
+/** Outbound HTTPS to carrier APIs (Twilio can be slow or blocked on some networks). */
+const CARRIER_HTTPS_TIMEOUT_MS = 28_000;
 
 type Body = {
   provider?: "twilio" | "exotel" | "plivo" | "telnyx";
@@ -17,9 +21,10 @@ function basicAuth(user: string, pass: string) {
 
 export async function POST(req: Request) {
   const started = performance.now();
+  let provider: NonNullable<Body["provider"]> = "twilio";
   try {
     const body: Body = await req.json().catch(() => ({}));
-    const provider = body.provider ?? "twilio";
+    provider = body.provider ?? "twilio";
 
     const twilioSid = body.accountSid?.trim() || process.env.TWILIO_ACCOUNT_SID || "";
     const twilioToken = body.authToken?.trim() || process.env.TWILIO_AUTH_TOKEN || "";
@@ -35,21 +40,27 @@ export async function POST(req: Request) {
         });
       }
       const url = `https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(twilioSid)}.json`;
-      const res = await fetch(url, {
-        headers: { Authorization: basicAuth(twilioSid, twilioToken) },
-        cache: "no-store",
-      });
+      const res = await httpsGetJson(url, { Authorization: basicAuth(twilioSid, twilioToken) }, CARRIER_HTTPS_TIMEOUT_MS);
       const latencyMs = Math.round(performance.now() - started);
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
+      if (res.statusCode < 200 || res.statusCode >= 300) {
         return NextResponse.json({
           ok: false,
           provider,
           latencyMs,
-          message: `Twilio returned ${res.status}. Check SID and Auth Token. ${text.slice(0, 120)}`,
+          message: `Twilio returned ${res.statusCode}. Check SID and Auth Token. ${res.text.slice(0, 120)}`,
         });
       }
-      const data = (await res.json().catch(() => ({}))) as { friendly_name?: string; status?: string };
+      let data: { friendly_name?: string; status?: string } = {};
+      try {
+        data = JSON.parse(res.text || "{}") as { friendly_name?: string; status?: string };
+      } catch {
+        return NextResponse.json({
+          ok: false,
+          provider,
+          latencyMs,
+          message: "Twilio returned non-JSON body. Check credentials and try again.",
+        });
+      }
       return NextResponse.json({
         ok: true,
         provider,
@@ -70,18 +81,14 @@ export async function POST(req: Request) {
         });
       }
       const url = `https://api.plivo.com/v1/Account/${encodeURIComponent(authId)}/`;
-      const res = await fetch(url, {
-        headers: { Authorization: basicAuth(authId, authToken) },
-        cache: "no-store",
-      });
+      const res = await httpsGetJson(url, { Authorization: basicAuth(authId, authToken) }, CARRIER_HTTPS_TIMEOUT_MS);
       const latencyMs = Math.round(performance.now() - started);
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
+      if (res.statusCode < 200 || res.statusCode >= 300) {
         return NextResponse.json({
           ok: false,
           provider,
           latencyMs,
-          message: `Plivo returned ${res.status}. ${text.slice(0, 120)}`,
+          message: `Plivo returned ${res.statusCode}. ${res.text.slice(0, 120)}`,
         });
       }
       return NextResponse.json({
@@ -102,18 +109,18 @@ export async function POST(req: Request) {
           message: "Telnyx needs an API key (V2 key) in the API Key field or TELNYX_API_KEY in .env.",
         });
       }
-      const res = await fetch("https://api.telnyx.com/v2/balance", {
-        headers: { Authorization: `Bearer ${key}` },
-        cache: "no-store",
-      });
+      const res = await httpsGetJson(
+        "https://api.telnyx.com/v2/balance",
+        { Authorization: `Bearer ${key}` },
+        CARRIER_HTTPS_TIMEOUT_MS
+      );
       const latencyMs = Math.round(performance.now() - started);
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
+      if (res.statusCode < 200 || res.statusCode >= 300) {
         return NextResponse.json({
           ok: false,
           provider,
           latencyMs,
-          message: `Telnyx returned ${res.status}. ${text.slice(0, 120)}`,
+          message: `Telnyx returned ${res.statusCode}. ${res.text.slice(0, 120)}`,
         });
       }
       return NextResponse.json({
@@ -157,13 +164,15 @@ export async function POST(req: Request) {
     });
   } catch (e) {
     const latencyMs = Math.round(performance.now() - started);
-    return NextResponse.json(
-      {
-        ok: false,
-        latencyMs,
-        message: e instanceof Error ? e.message : "Network or server error during telephony test.",
-      },
-      { status: 500 }
-    );
+    let message = e instanceof Error ? e.message : "Network or server error during telephony test.";
+    if (e instanceof Error && e.cause instanceof Error) {
+      message += ` — ${e.cause.name}: ${e.cause.message}`;
+    }
+    const lower = message.toLowerCase();
+    if (lower.includes("timeout") || lower.includes("etimedout") || lower.includes("connect")) {
+      message +=
+        " Outbound HTTPS from this machine to the carrier API could not complete. Try: different network/VPN off, corporate proxy (HTTP_PROXY/HTTPS_PROXY), or from a deployed host (Vercel) if local ISP blocks Twilio.";
+    }
+    return NextResponse.json({ ok: false, provider, latencyMs, message }, { status: 500 });
   }
 }

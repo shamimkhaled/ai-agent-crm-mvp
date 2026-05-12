@@ -1,20 +1,27 @@
 "use client";
 
+import { useShallow } from "zustand/react/shallow";
 import { useVoicePlatformStore } from "@/store/voicePlatformStore";
+import { useVoicePipelineWebhookFeed } from "@/hooks/useVoicePipelineWebhookFeed";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
-import { Trash2, Zap } from "lucide-react";
+import { Trash2, Zap, Radio } from "lucide-react";
 import { SettingsSectionHeader } from "@/components/settings/SettingsSectionHeader";
 
 export default function WebhooksSettingsPage() {
-  const { webhookLogs, clearWebhookLogs, appendWebhookLog, providers } = useVoicePlatformStore();
+  const { webhookLogs, appendWebhookLog } = useVoicePlatformStore(
+    useShallow((s) => ({
+      webhookLogs: s.webhookLogs,
+      appendWebhookLog: s.appendWebhookLog,
+    }))
+  );
+  const { liveActive, liveError, resetLiveLog, supabaseConfigured } = useVoicePipelineWebhookFeed();
 
   const simulate = () => {
-    const p = providers.find((x) => x.enabled) ?? providers[0];
     appendWebhookLog({
-      provider: p.kind,
+      provider: "twilio_voice",
       method: "POST",
       path: "/api/webhooks/voice/inbound",
       status: 200,
@@ -37,7 +44,7 @@ export default function WebhooksSettingsPage() {
             <Zap className="h-4 w-4 mr-2" />
             Simulate webhook
           </Button>
-          <Button type="button" variant="outline" onClick={clearWebhookLogs}>
+          <Button type="button" variant="outline" onClick={resetLiveLog}>
             <Trash2 className="h-4 w-4 mr-2" />
             Clear log
           </Button>
@@ -47,11 +54,27 @@ export default function WebhooksSettingsPage() {
       <Card className="glass">
         <CardHeader>
           <CardTitle className="text-base">Recommended endpoints</CardTitle>
-          <CardDescription>Mount handlers on these Next.js routes in production.</CardDescription>
+          <CardDescription>
+            Mount handlers on these Next.js routes. Full Twilio + ngrok + production steps:{" "}
+            <code className="text-foreground">docs/TWILIO_VOICE_INBOUND_PRODUCTION.md</code>.
+          </CardDescription>
         </CardHeader>
         <CardContent className="font-mono text-xs space-y-2 text-muted-foreground">
           <p>
-            <span className="text-foreground">POST</span> /api/webhooks/voice/inbound — voice URL
+            <span className="text-foreground">POST</span> /api/webhooks/voice/inbound — voice URL (TwiML
+            + Gather)
+          </p>
+          <p>
+            <span className="text-foreground">POST</span> /api/webhooks/voice/gather — speech → Gemini →
+            TwiML Say
+          </p>
+          <p>
+            <span className="text-foreground">POST</span> /api/webhooks/voice/ivr — DTMF language menu
+            (when <code className="text-foreground">TWILIO_VOICE_DTMF_MENU=true</code>)
+          </p>
+          <p>
+            <span className="text-foreground">GET</span> /api/webhooks/voice/diagnostic — env + webhook URL
+            checklist (open in browser when calls do not hit AI)
           </p>
           <p>
             <span className="text-foreground">POST</span> /api/webhooks/voice/status — carrier
@@ -68,11 +91,42 @@ export default function WebhooksSettingsPage() {
       </Card>
 
       <Card className="glass">
-        <CardHeader>
-          <CardTitle className="text-base">Live webhook log</CardTitle>
-          <CardDescription>Newest entries at the bottom; mirrors Supabase insert stream when enabled.</CardDescription>
+        <CardHeader className="space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <CardTitle className="text-base">Live webhook log</CardTitle>
+            {supabaseConfigured && liveActive ? (
+              <Badge variant="default" className="gap-1 font-normal">
+                <Radio className="h-3 w-3" />
+                Voice feed (Supabase)
+              </Badge>
+            ) : null}
+            {supabaseConfigured && !liveActive && !liveError ? (
+              <Badge variant="secondary" className="font-normal">
+                Connecting…
+              </Badge>
+            ) : null}
+            {liveError ? (
+              <Badge variant="destructive" className="font-normal max-w-[min(100%,280px)] truncate">
+                {liveError}
+              </Badge>
+            ) : null}
+          </div>
+          <CardDescription>
+            Newest entries at the bottom. Simulator and telephony test append here in the browser.
+            When <code className="text-foreground">NEXT_PUBLIC_SUPABASE_*</code> and{" "}
+            <code className="text-foreground">SUPABASE_SERVICE_ROLE_KEY</code> are set, real PSTN
+            calls append rows from <code className="text-foreground">voice_pipeline_events</code>{" "}
+            every few seconds (and instantly if that table is in the Realtime publication — see{" "}
+            <code className="text-foreground">supabase_schema.sql</code>).
+          </CardDescription>
         </CardHeader>
         <CardContent>
+          {!supabaseConfigured ? (
+            <p className="text-sm text-muted-foreground mb-3">
+              Add Supabase URL + anon key to <code className="text-foreground">.env.local</code> to
+              mirror live Twilio voice traffic (inbound, gather, status) in this list.
+            </p>
+          ) : null}
           <ScrollArea className="h-[420px] rounded-md border border-border bg-muted/20 p-3">
             <div className="space-y-2 font-mono text-[11px]">
               {webhookLogs.length === 0 ? (

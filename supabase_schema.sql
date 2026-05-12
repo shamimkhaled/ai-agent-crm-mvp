@@ -138,9 +138,57 @@ CREATE POLICY "voice_pipeline_events anon read" ON public.voice_pipeline_events 
 CREATE POLICY "whatsapp_inbound anon read" ON public.whatsapp_inbound FOR SELECT USING (true);
 CREATE POLICY "call_history anon read" ON public.call_history FOR SELECT USING (true);
 
--- ALTER PUBLICATION supabase_realtime ADD TABLE voice_pipeline_events;
--- ALTER PUBLICATION supabase_realtime ADD TABLE whatsapp_inbound;
--- ALTER PUBLICATION supabase_realtime ADD TABLE call_history;
+-- Instant UI updates (Settings → Webhooks live log): add tables to the Realtime publication once.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables
+    WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'voice_pipeline_events'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.voice_pipeline_events;
+  END IF;
+END $$;
+
+-- Optional: WhatsApp / call history dashboards
+-- DO $$ BEGIN ... ALTER PUBLICATION supabase_realtime ADD TABLE public.whatsapp_inbound; END $$;
+-- DO $$ BEGIN ... ALTER PUBLICATION supabase_realtime ADD TABLE public.call_history; END $$;
 
 CREATE POLICY "Allow anon insert ai_agents"
 ON public.ai_agents FOR INSERT WITH CHECK (true);
+
+-- =========================================================================
+-- Twilio / voice call sessions (written from Next.js using service role)
+-- =========================================================================
+
+CREATE TABLE IF NOT EXISTS public.call_sessions (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    call_sid TEXT NOT NULL UNIQUE,
+    account_sid TEXT,
+    from_e164 TEXT,
+    to_e164 TEXT,
+    direction TEXT DEFAULT 'inbound',
+    agent_id TEXT,
+    speech_input TEXT,
+    ai_reply_preview TEXT,
+    gemini_error TEXT,
+    call_status TEXT,
+    duration_sec INTEGER,
+    started_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    ended_at TIMESTAMP WITH TIME ZONE,
+    raw_last_payload JSONB
+);
+
+CREATE INDEX IF NOT EXISTS call_sessions_from_idx ON public.call_sessions (from_e164);
+CREATE INDEX IF NOT EXISTS call_sessions_started_idx ON public.call_sessions (started_at DESC);
+
+ALTER TABLE public.call_sessions ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "call_sessions authenticated select" ON public.call_sessions
+  FOR SELECT USING (auth.role() = 'authenticated');
+CREATE POLICY "call_sessions authenticated insert" ON public.call_sessions
+  FOR INSERT WITH CHECK (auth.role() = 'authenticated');
+CREATE POLICY "call_sessions authenticated update" ON public.call_sessions
+  FOR UPDATE USING (auth.role() = 'authenticated');
+
+CREATE POLICY "call_sessions anon read" ON public.call_sessions FOR SELECT USING (true);

@@ -465,8 +465,12 @@ export const useVoicePlatformStore = create<VoicePlatformState>()(
         }),
 
       appendWebhookLog: (entry) => {
+        const id = entry.id ?? uid();
+        const existing = get().webhookLogs;
+        const logs = Array.isArray(existing) ? existing : [];
+        if (logs.some((l) => l.id === id)) return;
         const row: WebhookLogEntry = {
-          id: entry.id ?? uid(),
+          id,
           at: entry.at ?? new Date().toISOString(),
           provider: entry.provider,
           method: entry.method,
@@ -475,7 +479,7 @@ export const useVoicePlatformStore = create<VoicePlatformState>()(
           latencyMs: entry.latencyMs,
           payloadPreview: entry.payloadPreview,
         };
-        set({ webhookLogs: trimLogs([...get().webhookLogs, row]) });
+        set({ webhookLogs: trimLogs([...logs, row]) });
       },
 
       pushCallEvent: (ev) => {

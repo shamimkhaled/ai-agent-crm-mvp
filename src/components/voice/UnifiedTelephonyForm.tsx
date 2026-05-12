@@ -28,6 +28,7 @@ import {
 } from "@/components/ui/select";
 import {
   Activity,
+  AlertTriangle,
   CheckCircle2,
   ChevronRight,
   Copy,
@@ -45,6 +46,12 @@ const STEPS = [
   { id: 2, title: "Connect account", hint: "Paste API keys — stored in this browser for MVP." },
   { id: 3, title: "Numbers & webhooks", hint: "Tell the carrier where to send events." },
 ] as const;
+
+/** Twilio Console “Studio” target — calls stay on Twilio until you Webhook or Redirect to your app. */
+function isTwilioStudioFlowVoiceUrl(url: string): boolean {
+  const u = url.trim().toLowerCase();
+  return u.includes("webhooks.twilio.com") && u.includes("/flows/");
+}
 
 function statusBadge(status: TelephonyConnectionStatus) {
   switch (status) {
@@ -106,6 +113,11 @@ export function UnifiedTelephonyForm() {
   const suggestedVoiceUrl = origin ? `${origin}/api/webhooks/voice/inbound` : "";
   const suggestedStatusUrl = origin ? `${origin}/api/webhooks/voice/status` : "";
   const suggestedWaUrl = origin ? `${origin}/api/webhooks/whatsapp` : "";
+
+  const voiceUrlIsTwilioStudio = useMemo(
+    () => isTwilioStudioFlowVoiceUrl(provider.voiceWebhookUrl),
+    [provider.voiceWebhookUrl]
+  );
 
   const applySuggestedWebhooks = () => {
     if (!suggestedVoiceUrl) return;
@@ -425,9 +437,50 @@ export function UnifiedTelephonyForm() {
                     <Input
                       value={provider.voiceWebhookUrl}
                       onChange={(e) => setProviderField(storeKind, { voiceWebhookUrl: e.target.value })}
-                      className="font-mono text-xs"
+                      className={cn(
+                        "font-mono text-xs",
+                        voiceUrlIsTwilioStudio && "border-amber-600/80 focus-visible:ring-amber-600"
+                      )}
                       placeholder={suggestedVoiceUrl || "https://…"}
                     />
+                    {voiceUrlIsTwilioStudio ? (
+                      <div className="flex gap-2 text-xs text-amber-950 dark:text-amber-200 bg-amber-500/15 border border-amber-600/40 rounded-md p-3 leading-relaxed">
+                        <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" aria-hidden />
+                        <span>
+                          This is a <strong className="font-medium">Twilio Studio Flow</strong> URL (
+                          <code className="font-mono">webhooks.twilio.com/…/Flows/…</code>). Inbound calls
+                          are handled inside Twilio Studio, so your CRM / Next.js{" "}
+                          <code className="font-mono">/api/webhooks/voice/inbound</code> is{" "}
+                          <strong className="font-medium">not</strong> invoked and you will not see live
+                          traffic here. In Twilio → <strong className="font-medium">Phone numbers → your
+                          number → Voice</strong>, set <strong className="font-medium">A call comes in</strong>{" "}
+                          to <strong className="font-medium">Webhook</strong> POST → paste your public
+                          {suggestedVoiceUrl ? (
+                            <>
+                              {" "}
+                              <span
+                                role="button"
+                                tabIndex={0}
+                                className="underline font-mono text-[11px] cursor-pointer"
+                                onClick={() => copy(suggestedVoiceUrl)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter" || e.key === " ") {
+                                    e.preventDefault();
+                                    copy(suggestedVoiceUrl);
+                                  }
+                                }}
+                              >
+                                {suggestedVoiceUrl}
+                              </span>{" "}
+                              (or add a Studio <strong className="font-medium">TwiML Redirect</strong> to
+                              that URL).
+                            </>
+                          ) : (
+                            <> app URL ending in /api/webhooks/voice/inbound (or add a Studio TwiML Redirect).</>
+                          )}
+                        </span>
+                      </div>
+                    ) : null}
                   </div>
                   <div className="space-y-2">
                     <Label>Status callback URL</Label>
