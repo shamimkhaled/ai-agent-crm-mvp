@@ -8,10 +8,8 @@ import {
 } from "@/lib/twilio/signature";
 import { escapeXml } from "@/lib/twilio/twiml";
 import {
-  insertVoiceCallTranscript,
   insertVoicePipelineEvent,
-  patchCallSessionBySid,
-  upsertCallSessionInbound,
+  persistInboundVoiceTelemetry,
 } from "@/lib/twilio/callSessionSupabase";
 
 export const dynamic = "force-dynamic";
@@ -70,26 +68,10 @@ export async function POST(req: NextRequest) {
     console.warn("[voice inbound] TWILIO_AUTH_TOKEN not set — skipping signature validation");
   }
 
+  // Critical: return TwiML immediately. Twilio waits on this HTTP response; if Supabase
+  // is slow or ENETUNREACH, awaiting DB here causes failed calls and missing audio.
   if (params.CallSid) {
-    // Upsert the session first so the row exists before parallel writes reference it
-    await upsertCallSessionInbound(params);
-    await Promise.all([
-      insertVoicePipelineEvent({
-        callId: params.CallSid,
-        step: "CALL_RECEIVED",
-        detail: `From=${params.From ?? ""} To=${params.To ?? ""} Status=${params.CallStatus ?? ""}`,
-      }),
-      insertVoiceCallTranscript({
-        callSid: params.CallSid,
-        speaker: "system",
-        body: `Inbound call — ${params.From ?? "?"} → ${params.To ?? "?"}. AI agent answering via Gemini + Twilio TTS.`,
-        pipelineStep: "Incoming Call",
-      }),
-      patchCallSessionBySid(params.CallSid, {
-        pipeline_step_index: 2,
-        dashboard_state: "ringing",
-      }),
-    ]);
+    void persistInboundVoiceTelemetry(params);
   }
 
   const dtmfMenu = process.env.TWILIO_VOICE_DTMF_MENU === "true";
@@ -99,7 +81,7 @@ export async function POST(req: NextRequest) {
     const ivrUrl = escapeXml(twilioWebhookFullUrl(req, "/api/webhooks/voice/ivr"));
     const menu = escapeXml("For English, press 1. বাংলার জন্য 2 চাপুন.");
     if (params.CallSid) {
-      await insertVoicePipelineEvent({
+      void insertVoicePipelineEvent({
         callId: params.CallSid,
         step: "IVR_DTMF_MENU",
         detail: "Presenting language menu",

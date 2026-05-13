@@ -205,9 +205,84 @@ export async function getCallConversationHistory(
   }));
 }
 
+/**
+ * When Twilio only hits the status callback (inbound webhook timed out, or race),
+ * ensure a row exists so the dashboard and logs still show From / To / failed state.
+ */
+export async function ensureCallSessionFromStatusIfMissing(params: TwilioParams): Promise<void> {
+  const admin = getSupabaseAdmin();
+  if (!admin || !params.CallSid) return;
+
+  const { data, error: selErr } = await admin
+    .from("call_sessions")
+    .select("call_sid")
+    .eq("call_sid", params.CallSid)
+    .maybeSingle();
+  if (selErr || data) return;
+
+  const from = params.From ?? "";
+  const tsRaw = params.Timestamp;
+  const tsSec = tsRaw ? parseInt(tsRaw, 10) : NaN;
+  const startedAt = Number.isFinite(tsSec) ? new Date(tsSec * 1000).toISOString() : nowIso();
+
+  const row: Record<string, unknown> = {
+    call_sid: params.CallSid,
+    account_sid: params.AccountSid ?? null,
+    from_e164: from || null,
+    to_e164: params.To ?? null,
+    direction: params.Direction ?? "inbound",
+    agent_id: process.env.VOICE_DEFAULT_AGENT_ID?.trim() || "agent-support-1",
+    call_status: params.CallStatus ?? null,
+    started_at: startedAt,
+    updated_at: nowIso(),
+    raw_last_payload: params,
+    dashboard_state: "ended",
+    pipeline_step_index: 0,
+    caller_display_name: from ? displayNameForCaller(from) : null,
+    dealer_code_hint: from ? guessDealerHint(from) : null,
+    human_takeover: false,
+    escalation: false,
+  };
+
+  const { error } = await admin.from("call_sessions").upsert(row, {
+    onConflict: "call_sid",
+    ignoreDuplicates: true,
+  });
+  if (error) console.warn("[call_sessions] ensure from status", error.message);
+}
+
+/** Fire-and-forget after TwiML is returned — never block Twilio on Supabase latency. */
+export async function persistInboundVoiceTelemetry(params: TwilioParams): Promise<void> {
+  if (!params.CallSid) return;
+  try {
+    await upsertCallSessionInbound(params);
+    await Promise.all([
+      insertVoicePipelineEvent({
+        callId: params.CallSid,
+        step: "CALL_RECEIVED",
+        detail: `From=${params.From ?? ""} To=${params.To ?? ""} Status=${params.CallStatus ?? ""}`,
+      }),
+      insertVoiceCallTranscript({
+        callSid: params.CallSid,
+        speaker: "system",
+        body: `Inbound call — ${params.From ?? "?"} → ${params.To ?? "?"}. AI agent answering via Gemini + Twilio TTS.`,
+        pipelineStep: "Incoming Call",
+      }),
+      patchCallSessionBySid(params.CallSid, {
+        pipeline_step_index: 2,
+        dashboard_state: "ringing",
+      }),
+    ]);
+  } catch (e) {
+    console.error("[voice inbound] persist telemetry failed", e instanceof Error ? e.message : e);
+  }
+}
+
 export async function updateCallSessionStatus(params: TwilioParams): Promise<void> {
   const admin = getSupabaseAdmin();
   if (!admin || !params.CallSid) return;
+
+  await ensureCallSessionFromStatusIfMissing(params);
 
   const duration = params.CallDuration ? parseInt(params.CallDuration, 10) : null;
   const terminal = ["completed", "busy", "failed", "no-answer", "canceled"].includes(

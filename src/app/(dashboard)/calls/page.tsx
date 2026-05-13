@@ -112,8 +112,11 @@ export default function LiveCallMonitorPage() {
   const liveElapsedSec = useMemo(() => {
     if (!live.selectedSession?.started_at) return 0;
     const start = new Date(live.selectedSession.started_at).getTime();
-    return Math.max(0, Math.floor((Date.now() - start) / 1000));
-  }, [live.selectedSession?.started_at, tick]);
+    const end = live.selectedSession.ended_at
+      ? new Date(live.selectedSession.ended_at).getTime()
+      : Date.now();
+    return Math.max(0, Math.floor((end - start) / 1000));
+  }, [live.selectedSession?.started_at, live.selectedSession?.ended_at, tick]);
 
   const liveThinking = live.selectedSession?.dashboard_state === "thinking";
   const liveSpeaking = live.selectedSession?.dashboard_state === "speaking";
@@ -266,7 +269,7 @@ export default function LiveCallMonitorPage() {
           <Badge variant="outline" className="gap-1.5 font-mono text-[10px]">
             {process.env.NEXT_PUBLIC_SUPABASE_URL ? "ngrok active" : "No webhook URL"}
           </Badge>
-          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { void live.reloadSessions(); void refreshStats(); }} title="Refresh">
+          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { void live.reloadSessions(); void live.reloadRecentSessions(); void refreshStats(); }} title="Refresh">
             <RefreshCw className="h-4 w-4" />
           </Button>
         </div>
@@ -316,8 +319,9 @@ export default function LiveCallMonitorPage() {
       {/* ═══ Main operational grid ═════════════════════════════════════════ */}
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
 
-        {/* LEFT — Active calls list */}
-        <Card className="glass xl:col-span-3 flex flex-col border-border/60">
+        {/* LEFT — Active + recent calls */}
+        <div className="xl:col-span-3 flex flex-col gap-3 min-h-0">
+        <Card className="glass flex flex-col border-border/60 min-h-0">
           <CardHeader className="pb-2 shrink-0">
             <CardTitle className="text-sm flex items-center gap-2">
               <Phone className="h-4 w-4 text-primary" />
@@ -402,6 +406,58 @@ export default function LiveCallMonitorPage() {
             </AnimatePresence>
           </CardContent>
         </Card>
+
+        <Card className="glass flex flex-col border-border/60 border-dashed">
+          <CardHeader className="pb-2 shrink-0 py-3">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <PhoneOff className="h-4 w-4 text-muted-foreground" />
+              Recent ended (72h)
+              {live.recentSessions.length > 0 && (
+                <Badge variant="outline" className="ml-auto text-[10px] px-1.5 py-0 font-mono">
+                  {live.recentSessions.length}
+                </Badge>
+              )}
+            </CardTitle>
+            <CardDescription className="text-[11px]">
+              Includes Twilio <span className="font-medium">failed</span> / completed — tap to inspect transcripts
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex-1 overflow-y-auto space-y-1.5 pr-1 pb-3 max-h-[280px]">
+            {live.supabaseConfigured && live.recentSessions.length === 0 && (
+              <p className="text-xs text-muted-foreground px-2 py-4 text-center">No ended calls in this window.</p>
+            )}
+            {live.recentSessions.map((s) => (
+              <button
+                key={s.call_sid}
+                type="button"
+                onClick={() => live.setSelectedSid(s.call_sid)}
+                className={cn(
+                  "w-full text-left rounded-lg border px-2.5 py-2 text-xs transition-colors",
+                  live.selectedSid === s.call_sid
+                    ? "border-primary bg-primary/10"
+                    : "border-border/60 bg-background/30 hover:bg-muted/25"
+                )}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-mono text-[10px] text-muted-foreground truncate">{s.call_sid}</span>
+                  <span
+                    className={cn(
+                      "shrink-0 text-[10px] px-1.5 py-0.5 rounded font-medium capitalize",
+                      (s.call_status || "").toLowerCase() === "failed"
+                        ? "bg-destructive/15 text-destructive"
+                        : "bg-muted text-muted-foreground"
+                    )}
+                  >
+                    {s.call_status ?? "—"}
+                  </span>
+                </div>
+                <p className="font-mono text-[11px] mt-0.5 truncate">{s.from_e164 ?? "—"}</p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">{relativeTime(s.started_at)}</p>
+              </button>
+            ))}
+          </CardContent>
+        </Card>
+        </div>
 
         {/* CENTER — Pipeline + Waveform + Transcript */}
         <div className="xl:col-span-6 space-y-3">

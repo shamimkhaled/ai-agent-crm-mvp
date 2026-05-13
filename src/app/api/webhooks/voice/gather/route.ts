@@ -102,6 +102,11 @@ function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T
   ]);
 }
 
+/** Avoid blocking Twilio when Supabase is slow (same class of issue as fast inbound TwiML). */
+function raceDb<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return withTimeout(promise, ms, fallback);
+}
+
 /**
  * Twilio posts `SpeechResult` after `<Gather input="speech">`.
  * Query `?lang=en|bn` carries IVR language for STT + Gemini bias.
@@ -146,14 +151,14 @@ export async function POST(req: NextRequest) {
   const from = params.From || "";
   const goodbye = escapeXml("Thank you for calling. Goodbye.");
 
-  // --- Human takeover guard ---
+  // --- Human takeover guard (do not block Gather on slow Supabase) ---
   if (callSid) {
-    const flags = await getCallSessionFlags(callSid);
+    const flags = await raceDb(getCallSessionFlags(callSid), 2000, null);
     if (flags?.human_takeover) {
-      await Promise.all([
+      void Promise.all([
         insertVoicePipelineEvent({ callId: callSid, step: "HUMAN_TAKEOVER_BLOCK", detail: "AI leg paused — operator takeover" }),
         insertVoiceCallTranscript({ callSid, speaker: "system", body: "Human takeover active — AI responses paused for this turn.", pipelineStep: "AI Agent" }),
-      ]);
+      ]).catch(() => {});
       const msg = escapeXml("Connecting you with our team. Please hold.");
       return twiml(`<Response><Say voice="Polly.Matthew">${msg}</Say></Response>`);
     }
@@ -162,28 +167,30 @@ export async function POST(req: NextRequest) {
   // --- Empty speech ---
   if (!speech) {
     const msg = escapeXml("I did not hear a question. Thank you for calling. Goodbye.");
+    const response = twiml(`<Response><Say voice="Polly.Matthew">${msg}</Say></Response>`);
     if (callSid) {
-      await Promise.all([
+      void Promise.all([
         insertVoicePipelineEvent({ callId: callSid, step: "GATHER_EMPTY", detail: "No SpeechResult" }),
         insertVoiceCallTranscript({ callSid, speaker: "system", body: "No speech detected on this gather.", pipelineStep: "STT" }),
         patchCallSessionBySid(callSid, { dashboard_state: "idle", pipeline_step_index: 3 }),
-      ]);
+      ]).catch((e) => console.warn("[voice gather] empty speech persist", e));
     }
-    return twiml(`<Response><Say voice="Polly.Matthew">${msg}</Say></Response>`);
+    return response;
   }
 
   // --- Hangup intent ---
   if (wantsToHangUp(speech)) {
+    const response = twiml(`<Response><Say voice="Polly.Matthew">${goodbye}</Say></Response>`);
     if (callSid) {
-      await Promise.all([
+      void Promise.all([
         recordCallSessionGatherTurn({ callSid, from, speech, aiReply: "[caller ended]", geminiError: null }),
         insertVoicePipelineEvent({ callId: callSid, step: "HANGUP_INTENT", detail: speech.slice(0, 400) }),
         insertVoiceCallTranscript({ callSid, speaker: "caller", body: speech, pipelineStep: "Intent Detection" }),
         insertVoiceCallTranscript({ callSid, speaker: "system", body: "Caller ended the conversation.", pipelineStep: "Reply to Caller" }),
         patchCallSessionBySid(callSid, { dashboard_state: "idle", pipeline_step_index: 8 }),
-      ]);
+      ]).catch((e) => console.warn("[voice gather] hangup persist", e));
     }
-    return twiml(`<Response><Say voice="Polly.Matthew">${goodbye}</Say></Response>`);
+    return response;
   }
 
   // --- Main AI pipeline (all unexpected errors return graceful TwiML) ---

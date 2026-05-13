@@ -39,17 +39,24 @@ function hasSupabaseBrowser(): boolean {
   );
 }
 
+const RECENT_SESSION_HOURS = 72;
+
 export function useLiveVoiceDashboard() {
   const [ready, setReady] = useState(false);
   const [sessions, setSessions] = useState<CallSessionRow[]>([]);
+  const [recentSessions, setRecentSessions] = useState<CallSessionRow[]>([]);
   const [selectedSid, setSelectedSid] = useState<string | null>(null);
   const [transcripts, setTranscripts] = useState<VoiceTranscriptRow[]>([]);
   const [connectionError, setConnectionError] = useState<string | null>(null);
 
-  const selectedSession = useMemo(
-    () => sessions.find((s) => s.call_sid === selectedSid) ?? null,
-    [sessions, selectedSid]
-  );
+  const selectedSession = useMemo(() => {
+    if (!selectedSid) return null;
+    return (
+      sessions.find((s) => s.call_sid === selectedSid) ??
+      recentSessions.find((s) => s.call_sid === selectedSid) ??
+      null
+    );
+  }, [sessions, recentSessions, selectedSid]);
 
   const loadSessions = useCallback(async () => {
     if (!hasSupabaseBrowser()) return;
@@ -73,6 +80,33 @@ export function useLiveVoiceDashboard() {
       const msg = e instanceof Error ? e.message : String(e);
       setConnectionError(msg);
       console.warn("[useLiveVoiceDashboard] loadSessions", msg);
+    }
+  }, []);
+
+  const loadRecentSessions = useCallback(async () => {
+    if (!hasSupabaseBrowser()) return;
+    try {
+      const supabase = createClient();
+      const since = new Date(Date.now() - RECENT_SESSION_HOURS * 60 * 60 * 1000).toISOString();
+      const { data, error } = await supabase
+        .from("call_sessions")
+        .select(
+          "call_sid,from_e164,to_e164,call_status,started_at,ended_at,updated_at,dashboard_state,pipeline_step_index,ai_confidence,escalation,human_takeover,intent_label,agent_id,caller_display_name,dealer_code_hint"
+        )
+        .not("ended_at", "is", null)
+        .gte("started_at", since)
+        .order("started_at", { ascending: false })
+        .limit(35);
+      if (error) {
+        setConnectionError(error.message);
+        return;
+      }
+      setConnectionError(null);
+      if (data) setRecentSessions(data as CallSessionRow[]);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setConnectionError(msg);
+      console.warn("[useLiveVoiceDashboard] loadRecentSessions", msg);
     }
   }, []);
 
@@ -102,7 +136,8 @@ export function useLiveVoiceDashboard() {
     if (!hasSupabaseBrowser()) return;
     setReady(true);
     void loadSessions();
-  }, [loadSessions]);
+    void loadRecentSessions();
+  }, [loadSessions, loadRecentSessions]);
 
   useEffect(() => {
     if (!selectedSid) {
@@ -114,6 +149,8 @@ export function useLiveVoiceDashboard() {
 
   const loadSessionsRef = useRef(loadSessions);
   loadSessionsRef.current = loadSessions;
+  const loadRecentSessionsRef = useRef(loadRecentSessions);
+  loadRecentSessionsRef.current = loadRecentSessions;
   const selectedSidRef = useRef(selectedSid);
   selectedSidRef.current = selectedSid;
 
@@ -129,6 +166,7 @@ export function useLiveVoiceDashboard() {
     // Always poll as fallback regardless of Realtime status
     const pollTimer = window.setInterval(() => {
       void loadSessionsRef.current();
+      void loadRecentSessionsRef.current();
     }, 5000);
 
     function connect() {
@@ -140,7 +178,10 @@ export function useLiveVoiceDashboard() {
         .on(
           "postgres_changes",
           { event: "*", schema: "public", table: "call_sessions" },
-          () => { void loadSessionsRef.current(); }
+          () => {
+            void loadSessionsRef.current();
+            void loadRecentSessionsRef.current();
+          }
         )
         .on(
           "postgres_changes",
@@ -151,6 +192,7 @@ export function useLiveVoiceDashboard() {
             const sid = selectedSidRef.current;
             if (row.call_sid !== sid) {
               void loadSessionsRef.current();
+              void loadRecentSessionsRef.current();
               return;
             }
             setTranscripts((prev) => {
@@ -192,11 +234,13 @@ export function useLiveVoiceDashboard() {
     supabaseConfigured: hasSupabaseBrowser(),
     ready,
     sessions,
+    recentSessions,
     selectedSid,
     setSelectedSid,
     selectedSession,
     transcripts,
     reloadSessions: loadSessions,
+    reloadRecentSessions: loadRecentSessions,
     connectionError,
   };
 }

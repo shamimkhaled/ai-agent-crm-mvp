@@ -1,4 +1,10 @@
+import * as dns from "node:dns";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+
+/** Prefer A records so Node does not pick an unroutable AAAA first (common ENETUNREACH cause). */
+if (typeof dns.setDefaultResultOrder === "function") {
+  dns.setDefaultResultOrder("ipv4first");
+}
 
 let cached: SupabaseClient | null = null;
 
