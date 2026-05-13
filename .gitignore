@@ -27,6 +27,8 @@ yarn-error.log*
 
 # local env files
 .env*.local
+# Production secrets — use Vercel dashboard; do not commit filled copies.
+.env.production
 
 # vercel
 .vercel

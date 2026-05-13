@@ -32,9 +32,26 @@ async function withRetries<T>(label: string, fn: () => Promise<T>, attempts = 3)
  *   - openEscalations : escalations with status = 'open'
  */
 export async function GET() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
   const admin = getSupabaseAdmin();
   if (!admin) {
-    return NextResponse.json({ ok: false, error: "Supabase service role not configured" }, { status: 503 });
+    const missing: string[] = [];
+    if (!url) missing.push("NEXT_PUBLIC_SUPABASE_URL");
+    if (!key) missing.push("SUPABASE_SERVICE_ROLE_KEY");
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "Supabase admin not configured",
+        /** Safe to show in browser Network tab — names only, no secrets. */
+        missingEnvVars: missing,
+        hint:
+          missing.length > 0
+            ? "Add these in Vercel → Project → Settings → Environment Variables → Production, then redeploy."
+            : "Check env values (empty after trim?).",
+      },
+      { status: 503 }
+    );
   }
 
   // Start of today in Asia/Dhaka (UTC+6)

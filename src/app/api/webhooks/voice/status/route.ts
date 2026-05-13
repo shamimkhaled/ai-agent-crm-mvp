@@ -48,5 +48,6 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  return new NextResponse("", { status: 204 });
+  // Use Web Response with null body — some runtimes reject NextResponse("", 204).
+  return new Response(null, { status: 204 });
 }
