@@ -82,7 +82,6 @@ export default function VoiceAgentsSettingsPage() {
   const [crmInput, setCrmInput] = useState("");
   const [saving, setSaving] = useState(false);
   const [deploying, setDeploying] = useState<string | null>(null);
-  const supabase = createClient();
   const { toast } = useToast();
 
   const normalizedAgents = useMemo(() => agents.map((a) => mergeVoiceAgent(a)), [agents]);
@@ -192,25 +191,35 @@ export default function VoiceAgentsSettingsPage() {
   const deployToSupabase = async (a: VoiceAgent) => {
     setDeploying(a.id);
     const merged = mergeVoiceAgent(a);
-    const { error } = await supabase.from("ai_agents").insert({
-      name: merged.name,
-      department: merged.department,
-      voice_model: merged.voiceId,
-      system_prompt: [
-        `Personality: ${merged.personalityPreset}. ${PRESET_SNIPPETS[merged.personalityPreset]}`,
-        merged.personalityPrompt,
-        merged.systemInstructions,
-      ]
-        .filter(Boolean)
-        .join("\n\n"),
-      status: merged.active ? "active" : "inactive",
-    });
-    if (error) {
-      toast({ title: "Supabase sync failed", description: error.message, variant: "destructive" });
-    } else {
-      toast({ title: "Synced to Supabase", description: "Row written to ai_agents." });
+    try {
+      const supabase = createClient();
+      const { error } = await supabase.from("ai_agents").insert({
+        name: merged.name,
+        department: merged.department,
+        voice_model: merged.voiceId,
+        system_prompt: [
+          `Personality: ${merged.personalityPreset}. ${PRESET_SNIPPETS[merged.personalityPreset]}`,
+          merged.personalityPrompt,
+          merged.systemInstructions,
+        ]
+          .filter(Boolean)
+          .join("\n\n"),
+        status: merged.active ? "active" : "inactive",
+      });
+      if (error) {
+        toast({ title: "Supabase sync failed", description: error.message, variant: "destructive" });
+      } else {
+        toast({ title: "Synced to Supabase", description: "Row written to ai_agents." });
+      }
+    } catch (e) {
+      toast({
+        title: "Supabase sync failed",
+        description: e instanceof Error ? e.message : String(e),
+        variant: "destructive",
+      });
+    } finally {
+      setDeploying(null);
     }
-    setDeploying(null);
   };
 
   const handleDelete = (a: VoiceAgent) => {

@@ -95,7 +95,7 @@ export async function generateGeminiResponse(
     if (!apiKey) {
       console.warn("No Gemini API key found");
       return {
-        text: "Mock AI Response: set GOOGLE_GEMINI_API_KEY on the server and restart Next.js.",
+        text: "Gemini is not configured on this server. Set GOOGLE_GEMINI_API_KEY and restart Next.js.",
         error: "missing_api_key",
       };
     }

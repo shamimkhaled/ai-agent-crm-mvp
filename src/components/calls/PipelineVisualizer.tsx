@@ -5,17 +5,34 @@ import { cn } from "@/lib/utils";
 import { motion } from "framer-motion";
 import { VOICE_PIPELINE_STEPS } from "@/lib/voicePipeline";
 
-export function PipelineVisualizer() {
-  const { callPipelineStep, isSimulating } = useCallStore();
+type Props = {
+  mode?: "simulator" | "live";
+  /** When `mode` is `live`, drive steps from Supabase `pipeline_step_index`. */
+  liveStepIndex?: number | null;
+  liveActive?: boolean;
+};
+
+export function PipelineVisualizer({ mode = "simulator", liveStepIndex, liveActive }: Props) {
+  const simStep = useCallStore((s) => s.callPipelineStep);
+  const simOn = useCallStore((s) => s.isSimulating);
+
+  const step =
+    mode === "live" && liveStepIndex !== undefined && liveStepIndex !== null
+      ? liveStepIndex
+      : simOn
+        ? simStep
+        : -1;
+
+  const isOn = mode === "live" ? Boolean(liveActive) : simOn;
 
   return (
     <div className="w-full bg-muted/20 border border-border rounded-xl p-4 flex items-center justify-between mb-6 overflow-x-auto shadow-sm">
-      {VOICE_PIPELINE_STEPS.map((step, index) => {
-        const isActive = isSimulating && callPipelineStep === index;
-        const isPast = isSimulating && callPipelineStep > index;
+      {VOICE_PIPELINE_STEPS.map((label, index) => {
+        const isActive = isOn && step === index;
+        const isPast = isOn && step > index;
 
         return (
-          <div key={step} className="flex items-center min-w-[max-content] flex-1">
+          <div key={label} className="flex items-center min-w-[max-content] flex-1">
             <div className="flex flex-col items-center max-w-[100px] sm:max-w-none">
               <div
                 className={cn(
@@ -35,7 +52,7 @@ export function PipelineVisualizer() {
                   isActive ? "text-primary" : "text-muted-foreground"
                 )}
               >
-                {step}
+                {label}
               </span>
             </div>
             {index < VOICE_PIPELINE_STEPS.length - 1 && (

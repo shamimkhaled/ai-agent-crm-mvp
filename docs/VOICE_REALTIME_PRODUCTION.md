@@ -4,6 +4,8 @@
 
 This document explains how to go from **simulator / mock** to **real users on the phone**, using Twilio + this Next.js app + Gemini + your product REST API.
 
+**Live Call Monitor (browser ops UI):** when `SUPABASE_SERVICE_ROLE_KEY` and browser `NEXT_PUBLIC_SUPABASE_*` are set, run `docs/sql/voice_operational_realtime.sql` so `call_sessions` + `voice_call_transcripts` broadcast to `/calls` via Supabase Realtime (transcript lines + pipeline index). PSTN audio remains on Twilio; the dashboard mirrors state.
+
 ---
 
 ## 1. Why you saw “I am currently unable to answer that”

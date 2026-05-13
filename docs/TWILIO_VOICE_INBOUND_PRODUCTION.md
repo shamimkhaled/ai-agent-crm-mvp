@@ -326,6 +326,7 @@ Webhooks use `getSupabaseAdmin()` (`src/lib/supabase/admin.ts`). If the service 
 | No rows in `call_sessions` | `SUPABASE_SERVICE_ROLE_KEY` missing or SQL not applied; check server logs for `[call_sessions]`. |
 | Call **Completed** but **no AI / no prompts** | Twilio never got valid TwiML, or **Gather `action` URL** was `localhost`. Set `TWILIO_WEBHOOK_BASE_URL` **or** nginx `X-Forwarded-Host` / `X-Forwarded-Proto`. Open `GET /api/webhooks/voice/diagnostic` and compare `voiceWebhookUrl` to the Console. In Twilio **Monitor → Logs / Debugger**, find the `CallSid` and check HTTP status on `/voice/inbound` (403 = signature). |
 | **Settings → Telephony → Test** shows timeout / `ConnectTimeoutError` | Your **dev machine** must reach `https://api.twilio.com` outbound. Try another network, disable VPN, set `HTTP_PROXY`/`HTTPS_PROXY` if required, or run the app on a host with open egress (e.g. deployed Vercel). The telephony test uses a 28s HTTPS client; if it still fails, verify with `curl -I https://api.twilio.com/`. |
+| **Python / Colab** (same prompts as Gather) | Run `docs/examples/colab_voice_gemini_agent_test.py` with `GOOGLE_GEMINI_API_KEY` set; optional `NEXT_BASE_URL` + dev-only `TWILIO_SKIP_SIGNATURE_VERIFY` to POST a fake Gather. |
 
 ---
 

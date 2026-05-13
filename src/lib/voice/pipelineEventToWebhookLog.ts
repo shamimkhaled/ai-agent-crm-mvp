@@ -14,14 +14,23 @@ function pathForStep(step: string): string {
   switch (step) {
     case "GATHER_EMPTY":
     case "GEMINI":
+    case "GEMINI_START":
     case "USER_SPEECH":
     case "HANGUP_INTENT":
+    case "STT":
+    case "INTENT":
+    case "CRM_QUERY":
+    case "TTS":
+    case "RESPONSE_SENT":
+    case "HUMAN_TAKEOVER_BLOCK":
+    case "HUMAN_TAKEOVER_REQUEST":
       return "/api/webhooks/voice/gather";
     case "STATUS":
       return "/api/webhooks/voice/status";
     case "IVR_DTMF_DIGIT":
       return "/api/webhooks/voice/ivr";
     case "INBOUND":
+    case "CALL_RECEIVED":
     case "IVR_DTMF_MENU":
     default:
       return "/api/webhooks/voice/inbound";

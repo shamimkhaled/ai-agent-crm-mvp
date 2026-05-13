@@ -40,11 +40,17 @@ export default function RealtimeMonitoringPage() {
 
   useEffect(() => {
     pingGemini();
-    const supabase = createClient();
-    void supabase
-      .from("conversations")
-      .select("id", { count: "exact", head: true })
-      .then(({ error }) => setSupabaseOk(!error));
+    void (async () => {
+      try {
+        const supabase = createClient();
+        const { error } = await supabase
+          .from("conversations")
+          .select("id", { count: "exact", head: true });
+        setSupabaseOk(!error);
+      } catch {
+        setSupabaseOk(false);
+      }
+    })();
   }, []);
 
   return (

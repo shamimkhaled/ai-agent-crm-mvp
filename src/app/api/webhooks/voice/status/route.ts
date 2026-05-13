@@ -5,7 +5,7 @@ import {
   validateTwilioSignature,
   twilioWebhookRequestUrl,
 } from "@/lib/twilio/signature";
-import { insertVoicePipelineEvent, updateCallSessionStatus } from "@/lib/twilio/callSessionSupabase";
+import { insertVoiceCallTranscript, insertVoicePipelineEvent, updateCallSessionStatus } from "@/lib/twilio/callSessionSupabase";
 
 export const dynamic = "force-dynamic";
 
@@ -35,6 +35,17 @@ export async function POST(req: NextRequest) {
       step: "STATUS",
       detail: `CallStatus=${CallStatus ?? ""} Duration=${CallDuration ?? ""}`,
     });
+    const terminal = ["completed", "busy", "failed", "no-answer", "canceled"].includes(
+      (CallStatus || "").toLowerCase()
+    );
+    if (terminal) {
+      await insertVoiceCallTranscript({
+        callSid: CallSid,
+        speaker: "system",
+        body: `Call ${CallStatus ?? "ended"}. Duration ${CallDuration ?? "?"}s.`,
+        pipelineStep: "Reply to Caller",
+      });
+    }
   }
 
   return new NextResponse("", { status: 204 });

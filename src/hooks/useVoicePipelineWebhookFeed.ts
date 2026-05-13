@@ -64,34 +64,46 @@ export function useVoicePipelineWebhookFeed() {
     let cancelled = false;
 
     async function bootstrap() {
-      const { data, error } = await supabase
-        .from("voice_pipeline_events")
-        .select("id,call_id,step,detail,duration_ms,created_at")
-        .order("created_at", { ascending: false })
-        .limit(BOOTSTRAP_LIMIT);
+      try {
+        const { data, error } = await supabase
+          .from("voice_pipeline_events")
+          .select("id,call_id,step,detail,duration_ms,created_at")
+          .order("created_at", { ascending: false })
+          .limit(BOOTSTRAP_LIMIT);
 
-      if (cancelled) return;
-      if (error) {
-        setLiveError(error.message);
+        if (cancelled) return;
+        if (error) {
+          setLiveError(error.message);
+          setLiveActive(false);
+          return;
+        }
+        setLiveError(null);
+        setLiveActive(true);
+        ingestRows((data ?? []) as VoicePipelineEventRow[]);
+      } catch (e) {
+        if (cancelled) return;
+        const msg = e instanceof Error ? e.message : String(e);
+        setLiveError(msg);
         setLiveActive(false);
-        return;
+        console.warn("[useVoicePipelineWebhookFeed] bootstrap", msg);
       }
-      setLiveError(null);
-      setLiveActive(true);
-      ingestRows((data ?? []) as VoicePipelineEventRow[]);
     }
 
     void bootstrap();
 
     const poll = async () => {
       if (cancelled) return;
-      const { data, error } = await supabase
-        .from("voice_pipeline_events")
-        .select("id,call_id,step,detail,duration_ms,created_at")
-        .order("created_at", { ascending: false })
-        .limit(40);
-      if (cancelled || error) return;
-      ingestRows((data ?? []) as VoicePipelineEventRow[]);
+      try {
+        const { data, error } = await supabase
+          .from("voice_pipeline_events")
+          .select("id,call_id,step,detail,duration_ms,created_at")
+          .order("created_at", { ascending: false })
+          .limit(40);
+        if (cancelled || error) return;
+        ingestRows((data ?? []) as VoicePipelineEventRow[]);
+      } catch {
+        /* network blips — next poll may succeed */
+      }
     };
 
     const pollTimer = window.setInterval(() => void poll(), POLL_MS);
@@ -106,7 +118,13 @@ export function useVoicePipelineWebhookFeed() {
           if (row?.id) ingestRows([row]);
         }
       )
-      .subscribe();
+      .subscribe((status, err) => {
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          const msg = err instanceof Error ? err.message : String(err ?? status);
+          setLiveError(msg);
+          console.warn("[useVoicePipelineWebhookFeed] Realtime", status, err);
+        }
+      });
 
     return () => {
       cancelled = true;

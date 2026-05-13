@@ -8,7 +8,9 @@ import {
 } from "@/lib/twilio/signature";
 import { escapeXml } from "@/lib/twilio/twiml";
 import {
+  insertVoiceCallTranscript,
   insertVoicePipelineEvent,
+  patchCallSessionBySid,
   upsertCallSessionInbound,
 } from "@/lib/twilio/callSessionSupabase";
 
@@ -69,12 +71,25 @@ export async function POST(req: NextRequest) {
   }
 
   if (params.CallSid) {
+    // Upsert the session first so the row exists before parallel writes reference it
     await upsertCallSessionInbound(params);
-    await insertVoicePipelineEvent({
-      callId: params.CallSid,
-      step: "INBOUND",
-      detail: `From=${params.From ?? ""} To=${params.To ?? ""} Status=${params.CallStatus ?? ""}`,
-    });
+    await Promise.all([
+      insertVoicePipelineEvent({
+        callId: params.CallSid,
+        step: "CALL_RECEIVED",
+        detail: `From=${params.From ?? ""} To=${params.To ?? ""} Status=${params.CallStatus ?? ""}`,
+      }),
+      insertVoiceCallTranscript({
+        callSid: params.CallSid,
+        speaker: "system",
+        body: `Inbound call — ${params.From ?? "?"} → ${params.To ?? "?"}. AI agent answering via Gemini + Twilio TTS.`,
+        pipelineStep: "Incoming Call",
+      }),
+      patchCallSessionBySid(params.CallSid, {
+        pipeline_step_index: 2,
+        dashboard_state: "ringing",
+      }),
+    ]);
   }
 
   const dtmfMenu = process.env.TWILIO_VOICE_DTMF_MENU === "true";

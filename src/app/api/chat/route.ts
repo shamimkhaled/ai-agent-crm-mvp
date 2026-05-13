@@ -17,7 +17,7 @@ export async function POST(req: Request) {
     const systemPrompt = `You are a helpful AI CRM assistant for a business in Bangladesh (e.g. Garments, ISP, Distributor).
 Respond intelligently, concisely, and professionally. Mix Bangla and English as appropriate.
 You can understand order queries, product tracking, and dealer issues.
-Use mock data dynamically in your head if asked about a specific dealer code like '1212' or '3340'.
+If the user mentions a dealer code (e.g. 1212, 3340), explain what you would verify in CRM without inventing private order data.
 ${crmContext ? `\n\n--- Live CRM / product context (JSON or text from your API) ---\n${crmContext}` : ""}`;
 
     const { text: aiMessage, error: geminiError } = await generateGeminiResponse(messages, systemPrompt);
@@ -34,8 +34,9 @@ ${crmContext ? `\n\n--- Live CRM / product context (JSON or text from your API) 
     */
 
     return NextResponse.json({ result: aiMessage, geminiError: geminiError ?? null });
-  } catch (error: any) {
-    console.error("API Route Error:", error);
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error("API Route Error:", msg);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
