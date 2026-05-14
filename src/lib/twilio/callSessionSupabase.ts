@@ -1,5 +1,6 @@
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { displayNameForCaller, guessDealerHint } from "@/lib/twilio/voiceIntent";
+import { lookupAgentByPhoneNumber, type AgentConfig } from "@/lib/supabase/agentRouter";
 
 function nowIso() {
   return new Date().toISOString();
@@ -25,20 +26,26 @@ export async function insertVoicePipelineEvent(entry: {
 
 type TwilioParams = Record<string, string>;
 
-export async function upsertCallSessionInbound(params: TwilioParams): Promise<void> {
+export async function upsertCallSessionInbound(
+  params: TwilioParams,
+  agentOverride?: AgentConfig
+): Promise<void> {
   const admin = getSupabaseAdmin();
   if (!admin || !params.CallSid) return;
 
   const from = params.From ?? "";
-  const defaultAgent = process.env.VOICE_DEFAULT_AGENT_ID?.trim() || "agent-support-1";
+  const to = params.To ?? "";
+
+  // Use provided agent config or resolve dynamically from phone number
+  const agent = agentOverride ?? (await lookupAgentByPhoneNumber(to));
 
   const row: Record<string, unknown> = {
     call_sid: params.CallSid,
     account_sid: params.AccountSid ?? null,
     from_e164: from || null,
-    to_e164: params.To ?? null,
+    to_e164: to || null,
     direction: params.Direction ?? "inbound",
-    agent_id: defaultAgent,
+    agent_id: agent.id,
     call_status: params.CallStatus ?? "in-progress",
     updated_at: nowIso(),
     started_at: nowIso(),
@@ -49,6 +56,15 @@ export async function upsertCallSessionInbound(params: TwilioParams): Promise<vo
     dealer_code_hint: from ? guessDealerHint(from) : null,
     human_takeover: false,
     escalation: false,
+    // Store agent metadata so gather handler can access it without a second DB lookup
+    meta: {
+      agent_name: agent.name,
+      agent_department: agent.department,
+      agent_language: agent.language,
+      agent_tts_voice: agent.tts_voice,
+      agent_kb_document_ids: agent.kb_document_ids,
+      agent_connector_ids: agent.connector_ids,
+    },
   };
 
   const { error } = await admin.from("call_sessions").upsert(row, { onConflict: "call_sid" });
@@ -66,6 +82,29 @@ export async function patchCallSessionBySid(
     .update({ ...patch, updated_at: nowIso() })
     .eq("call_sid", callSid);
   if (error) console.warn("[call_sessions] patch", error.message);
+}
+
+export async function getCallSessionMeta(callSid: string): Promise<{
+  human_takeover: boolean;
+  agent_id: string | null;
+  to_e164: string | null;
+  meta: Record<string, unknown>;
+} | null> {
+  const admin = getSupabaseAdmin();
+  if (!admin || !callSid) return null;
+  const { data, error } = await admin
+    .from("call_sessions")
+    .select("human_takeover,agent_id,to_e164,meta")
+    .eq("call_sid", callSid)
+    .maybeSingle();
+  if (error || !data) return null;
+  const row = data as { human_takeover?: boolean; agent_id?: string; to_e164?: string; meta?: Record<string, unknown> };
+  return {
+    human_takeover: Boolean(row.human_takeover),
+    agent_id: row.agent_id ?? null,
+    to_e164: row.to_e164 ?? null,
+    meta: row.meta ?? {},
+  };
 }
 
 export async function getCallSessionFlags(callSid: string): Promise<{
@@ -113,6 +152,7 @@ export async function insertVoiceCallTranscript(entry: {
 export async function recordCallSessionGatherTurn(params: {
   callSid: string;
   from?: string;
+  to?: string;
   speech: string;
   aiReply: string;
   geminiError?: string | null;
@@ -144,16 +184,24 @@ export async function recordCallSessionGatherTurn(params: {
     return;
   }
 
+  const agent = await lookupAgentByPhoneNumber(params.to ?? "");
   const insert: Record<string, unknown> = {
     call_sid: params.callSid,
     from_e164: params.from ?? null,
+    to_e164: params.to ?? null,
     ...patch,
     started_at: nowIso(),
     call_status: "in-progress",
     raw_last_payload: {},
     dashboard_state: "thinking",
     pipeline_step_index: 3,
-    agent_id: process.env.VOICE_DEFAULT_AGENT_ID?.trim() || "agent-support-1",
+    agent_id: agent.id,
+    meta: {
+      agent_name: agent.name,
+      agent_department: agent.department,
+      agent_language: agent.language,
+      agent_tts_voice: agent.tts_voice,
+    },
   };
   const { error } = await admin.from("call_sessions").insert(insert);
   if (error) console.warn("[call_sessions] gather insert", error.message);
@@ -225,13 +273,15 @@ export async function ensureCallSessionFromStatusIfMissing(params: TwilioParams)
   const tsSec = tsRaw ? parseInt(tsRaw, 10) : NaN;
   const startedAt = Number.isFinite(tsSec) ? new Date(tsSec * 1000).toISOString() : nowIso();
 
+  const agent = await lookupAgentByPhoneNumber(params.To ?? "");
+
   const row: Record<string, unknown> = {
     call_sid: params.CallSid,
     account_sid: params.AccountSid ?? null,
     from_e164: from || null,
     to_e164: params.To ?? null,
     direction: params.Direction ?? "inbound",
-    agent_id: process.env.VOICE_DEFAULT_AGENT_ID?.trim() || "agent-support-1",
+    agent_id: agent.id,
     call_status: params.CallStatus ?? null,
     started_at: startedAt,
     updated_at: nowIso(),
@@ -242,6 +292,12 @@ export async function ensureCallSessionFromStatusIfMissing(params: TwilioParams)
     dealer_code_hint: from ? guessDealerHint(from) : null,
     human_takeover: false,
     escalation: false,
+    meta: {
+      agent_name: agent.name,
+      agent_department: agent.department,
+      agent_language: agent.language,
+      agent_tts_voice: agent.tts_voice,
+    },
   };
 
   const { error } = await admin.from("call_sessions").upsert(row, {
@@ -252,20 +308,24 @@ export async function ensureCallSessionFromStatusIfMissing(params: TwilioParams)
 }
 
 /** Fire-and-forget after TwiML is returned — never block Twilio on Supabase latency. */
-export async function persistInboundVoiceTelemetry(params: TwilioParams): Promise<void> {
+export async function persistInboundVoiceTelemetry(
+  params: TwilioParams,
+  agentOverride?: AgentConfig
+): Promise<void> {
   if (!params.CallSid) return;
   try {
-    await upsertCallSessionInbound(params);
+    await upsertCallSessionInbound(params, agentOverride);
+    const agentName = agentOverride?.name ?? "AI Agent";
     await Promise.all([
       insertVoicePipelineEvent({
         callId: params.CallSid,
         step: "CALL_RECEIVED",
-        detail: `From=${params.From ?? ""} To=${params.To ?? ""} Status=${params.CallStatus ?? ""}`,
+        detail: `From=${params.From ?? ""} To=${params.To ?? ""} Agent=${agentName} Status=${params.CallStatus ?? ""}`,
       }),
       insertVoiceCallTranscript({
         callSid: params.CallSid,
         speaker: "system",
-        body: `Inbound call — ${params.From ?? "?"} → ${params.To ?? "?"}. AI agent answering via Gemini + Twilio TTS.`,
+        body: `Inbound call — ${params.From ?? "?"} → ${params.To ?? "?"}. ${agentName} is answering via Gemini + Twilio TTS.`,
         pipelineStep: "Incoming Call",
       }),
       patchCallSessionBySid(params.CallSid, {

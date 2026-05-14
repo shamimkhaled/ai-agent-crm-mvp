@@ -160,8 +160,9 @@ export function useLiveVoiceDashboard() {
     let cancelled = false;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
     let retryCount = 0;
-    const MAX_RETRIES = 10;
-    const RETRY_BASE_MS = 3000;
+    // After MAX_RETRIES the hook falls back to polling-only (5 s interval already running).
+    const MAX_RETRIES = 3;
+    const RETRY_BASE_MS = 4000;
 
     // Always poll as fallback regardless of Realtime status
     const pollTimer = window.setInterval(() => {
@@ -203,15 +204,19 @@ export function useLiveVoiceDashboard() {
         )
         .subscribe((status, err) => {
           if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
-            const msg = err instanceof Error ? err.message : String(err ?? status);
-            // Only show error after several retries — transient 1006 errors are normal
-            if (retryCount >= 3) setConnectionError(msg);
-            console.warn("[useLiveVoiceDashboard] Realtime", status, "— retry", retryCount + 1);
             void supabase.removeChannel(channel);
-            if (!cancelled && retryCount < MAX_RETRIES) {
-              const delay = Math.min(RETRY_BASE_MS * Math.pow(1.5, retryCount), 30000);
+            if (cancelled) return;
+
+            if (retryCount < MAX_RETRIES) {
+              const delay = Math.min(RETRY_BASE_MS * Math.pow(1.5, retryCount), 20000);
+              console.warn(`[useLiveVoiceDashboard] Realtime ${status} — retry ${retryCount + 1}/${MAX_RETRIES} in ${Math.round(delay / 1000)}s`);
               retryTimer = setTimeout(connect, delay);
               retryCount++;
+            } else {
+              // Give up on Realtime — polling fallback is already active
+              const msg = err instanceof Error ? err.message : String(err ?? status);
+              console.info("[useLiveVoiceDashboard] Realtime unavailable, using polling fallback.", msg.slice(0, 80));
+              setConnectionError("Realtime unavailable — using polling fallback (updates every 5s)");
             }
           }
           if (status === "SUBSCRIBED") {

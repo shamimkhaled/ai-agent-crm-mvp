@@ -1,0 +1,36 @@
+# Bridge server Dockerfile — for Fly.io / Railway / Render deployment
+# Runs the Twilio Media Streams ↔ ElevenLabs WebSocket bridge
+
+FROM node:20-alpine AS base
+WORKDIR /app
+
+# Install dependencies
+FROM base AS deps
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
+
+# Build TypeScript
+FROM base AS builder
+COPY package.json package-lock.json tsconfig.json ./
+RUN npm ci
+COPY src/lib/elevenlabs ./src/lib/elevenlabs
+COPY server/media-stream-server.ts ./server/
+RUN npx tsc --outDir dist --module commonjs --moduleResolution node \
+    --esModuleInterop true --resolveJsonModule true --skipLibCheck true \
+    server/media-stream-server.ts
+
+# Production image
+FROM base AS runner
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=builder /app/dist ./dist
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
+  CMD wget -qO- http://localhost:8080/health || exit 1
+
+EXPOSE 8080
+
+ENV NODE_ENV=production
+ENV BRIDGE_PORT=8080
+
+CMD ["node", "dist/server/media-stream-server.js"]

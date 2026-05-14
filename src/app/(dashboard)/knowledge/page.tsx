@@ -1,283 +1,532 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { UploadCloud, FileText, Trash2, Loader2, Search, Layers, MessageSquare } from "lucide-react";
-import { Progress } from "@/components/ui/progress";
-import { createClient } from "@/lib/supabase/client";
+import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
+import { createClient } from "@/lib/supabase/client";
+import { cn } from "@/lib/utils";
+import {
+  BookOpen, Upload, Search, Zap, FileText, Activity,
+  CheckCircle2, Clock, Loader2, AlertTriangle, Trash2,
+  Database, Eye, RefreshCw, Brain,
+} from "lucide-react";
 
-type StorageFile = { name: string; metadata?: unknown; created_at: string; updated_at?: string };
+interface KbDocument {
+  id: string;
+  title: string;
+  status: string;
+  mime_type: string;
+  storage_path: string;
+  created_at: string;
+  chunk_count?: number;
+}
 
-const FAQ_SEED = [
-  { id: "1", q: "What are business hours?", a: "Sat–Thu 9am–6pm Asia/Dhaka; Fri reduced staff." },
-  { id: "2", q: "How do returns work?", a: "Garments: 7-day exchange with tags; see policy PDF in storage." },
-];
+interface SearchResult {
+  content: string;
+  similarity?: number;
+  meta?: Record<string, unknown>;
+}
 
-export default function KnowledgeBasePage() {
-  const [files, setFiles] = useState<StorageFile[]>([]);
-  const [uploading, setUploading] = useState(false);
+const STATUS_ICONS = {
+  ready:      { icon: <CheckCircle2 size={12} />, color: "text-[hsl(var(--emerald))]", bg: "bg-[hsl(var(--emerald))/10]" },
+  processing: { icon: <Loader2 size={12} className="animate-spin" />, color: "text-[hsl(var(--cyan))]", bg: "bg-[hsl(var(--cyan))/10]" },
+  partial:    { icon: <AlertTriangle size={12} />, color: "text-[hsl(var(--amber))]", bg: "bg-[hsl(var(--amber))/10]" },
+  error:      { icon: <AlertTriangle size={12} />, color: "text-[hsl(var(--rose))]", bg: "bg-[hsl(var(--rose))/10]" },
+};
+
+function DocCard({
+  doc,
+  onIngest,
+  onDelete,
+  ingesting,
+}: {
+  doc: KbDocument;
+  onIngest: (doc: KbDocument) => void;
+  onDelete: (id: string) => void;
+  ingesting: boolean;
+}) {
+  const status = STATUS_ICONS[doc.status as keyof typeof STATUS_ICONS] ?? STATUS_ICONS.processing;
+  const isConnector = doc.storage_path.startsWith("connector:");
+
+  return (
+    <motion.div
+      layout
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, scale: 0.96 }}
+      className="flex items-center gap-3 px-4 py-3 rounded-xl bg-[hsl(var(--surface-2))] hover:bg-[hsl(var(--surface-3))] transition-colors group"
+    >
+      {/* Icon */}
+      <div className={cn(
+        "w-8 h-8 rounded-lg flex items-center justify-center shrink-0",
+        isConnector ? "bg-[hsl(var(--violet))/10]" : "bg-[hsl(var(--cyan))/10]"
+      )}>
+        {isConnector ? (
+          <Database size={14} className="text-[hsl(var(--violet))]" />
+        ) : (
+          <FileText size={14} className="text-[hsl(var(--cyan))]" />
+        )}
+      </div>
+
+      {/* Info */}
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium text-foreground truncate">{doc.title}</p>
+        <div className="flex items-center gap-2 mt-0.5">
+          <div className={cn("flex items-center gap-1 text-[10px] font-mono", status.color)}>
+            {status.icon}
+            {doc.status}
+          </div>
+          {doc.chunk_count !== undefined && (
+            <span className="text-[10px] font-mono text-muted-foreground">
+              {doc.chunk_count} chunks
+            </span>
+          )}
+          <span className="text-[10px] font-mono text-muted-foreground">
+            {new Date(doc.created_at).toLocaleDateString()}
+          </span>
+        </div>
+      </div>
+
+      {/* Actions */}
+      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 px-2 text-xs gap-1 hover:text-[hsl(var(--cyan))]"
+          onClick={() => onIngest(doc)}
+          disabled={ingesting}
+          title="Re-process & generate embeddings"
+        >
+          {ingesting ? <Loader2 size={11} className="animate-spin" /> : <Zap size={11} />}
+          Embed
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 w-7 p-0 text-destructive hover:text-destructive"
+          onClick={() => onDelete(doc.id)}
+          title="Delete document"
+        >
+          <Trash2 size={11} />
+        </Button>
+      </div>
+    </motion.div>
+  );
+}
+
+export default function KnowledgePage() {
+  const [docs, setDocs] = useState<KbDocument[]>([]);
   const [loading, setLoading] = useState(true);
-  const [faqs, setFaqs] = useState(FAQ_SEED);
-  const [newQ, setNewQ] = useState("");
-  const [newA, setNewA] = useState("");
-  const [retrievalQ, setRetrievalQ] = useState("Summarize our return policy in one sentence.");
-  const [retrievalOut, setRetrievalOut] = useState("");
-  const [retrievalBusy, setRetrievalBusy] = useState(false);
-  const supabase = createClient();
+  const [uploading, setUploading] = useState(false);
+  const [ingestingId, setIngestingId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searching, setSearching] = useState(false);
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [totalChunks, setTotalChunks] = useState(0);
+  const fileRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
-  const fetchFiles = async () => {
+  const loadDocs = useCallback(async () => {
     setLoading(true);
-    const { data } = await supabase.storage.from("knowledge_base").list();
-    if (data) setFiles(data as StorageFile[]);
-    setLoading(false);
-  };
+    const supabase = createClient();
+    const { data } = await supabase
+      .from("kb_documents")
+      .select("*")
+      .order("created_at", { ascending: false });
 
-  useEffect(() => {
-    fetchFiles();
+    const docList = (data ?? []) as KbDocument[];
+
+    // Fetch chunk counts
+    const withCounts = await Promise.all(
+      docList.map(async (doc) => {
+        const { count } = await supabase
+          .from("kb_chunks")
+          .select("*", { count: "exact", head: true })
+          .eq("document_id", doc.id);
+        return { ...doc, chunk_count: count ?? 0 };
+      })
+    );
+
+    setDocs(withCounts);
+    setTotalChunks(withCounts.reduce((sum, d) => sum + (d.chunk_count ?? 0), 0));
+    setLoading(false);
   }, []);
 
-  const handleUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
+  useEffect(() => { void loadDocs(); }, [loadDocs]);
+
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
     if (!file) return;
     setUploading(true);
-    const { error } = await supabase.storage.from("knowledge_base").upload(`${Date.now()}_${file.name}`, file);
-    if (error) {
-      toast({ title: "Upload failed", description: error.message, variant: "destructive" });
-    } else {
-      toast({ title: "Uploaded", description: "Queued for chunking / embedding in production." });
-      fetchFiles();
+
+    const supabase = createClient();
+    const filePath = `uploads/${Date.now()}_${file.name}`;
+
+    // 1. Upload to Supabase Storage
+    const { error: uploadErr } = await supabase.storage
+      .from("knowledge_base")
+      .upload(filePath, file);
+
+    if (uploadErr) {
+      toast({ title: "Upload failed", description: uploadErr.message, variant: "destructive" });
+      setUploading(false);
+      return;
     }
+
+    // 2. Create kb_documents row
+    const { data: docRow, error: docErr } = await supabase
+      .from("kb_documents")
+      .insert({
+        title: file.name,
+        storage_path: filePath,
+        mime_type: file.type || "text/plain",
+        status: "processing",
+      })
+      .select("id")
+      .single();
+
+    if (docErr || !docRow) {
+      toast({ title: "Document record failed", description: docErr?.message, variant: "destructive" });
+      setUploading(false);
+      return;
+    }
+
+    // 3. Trigger ingestion pipeline
+    const res = await fetch("/api/knowledge/ingest", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        document_id: (docRow as KbDocument).id,
+        storage_path: filePath,
+      }),
+    });
+    const json = await res.json() as { stats?: { chunks_inserted: number } };
+
+    toast({
+      title: "Document ingested",
+      description: `${json.stats?.chunks_inserted ?? 0} chunks with embeddings stored`,
+    });
+
     setUploading(false);
+    if (fileRef.current) fileRef.current.value = "";
+    void loadDocs();
   };
 
-  const handleDelete = async (fileName: string) => {
-    const { error } = await supabase.storage.from("knowledge_base").remove([fileName]);
-    if (error) toast({ title: "Delete failed", description: error.message, variant: "destructive" });
-    else fetchFiles();
-  };
-
-  const runRetrievalTest = async () => {
-    if (!retrievalQ.trim()) return;
-    setRetrievalBusy(true);
-    setRetrievalOut("");
-    try {
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          messages: [
-            {
-              role: "user",
-              content: `${retrievalQ}\n\nContext: you may use uploaded knowledge base + CRM mapping from the product demo.`,
-            },
-          ],
-        }),
-      });
-      const data = await res.json();
-      setRetrievalOut(data.result ?? "No response");
-    } catch {
-      setRetrievalOut("Request failed.");
-    } finally {
-      setRetrievalBusy(false);
+  const handleIngest = async (doc: KbDocument) => {
+    setIngestingId(doc.id);
+    const res = await fetch("/api/knowledge/ingest", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        document_id: doc.id,
+        storage_path: doc.storage_path,
+      }),
+    });
+    const json = await res.json() as { error?: string; stats?: { chunks_inserted: number } };
+    setIngestingId(null);
+    if (!res.ok) {
+      toast({ title: "Ingest failed", description: json.error ?? "Error", variant: "destructive" });
+    } else {
+      toast({ title: "Re-ingested", description: `${json.stats?.chunks_inserted ?? 0} chunks updated` });
+      void loadDocs();
     }
+  };
+
+  const handleDelete = async (id: string) => {
+    const supabase = createClient();
+    await supabase.from("kb_chunks").delete().eq("document_id", id);
+    await supabase.from("kb_documents").delete().eq("id", id);
+    toast({ title: "Document deleted" });
+    setDocs((prev) => prev.filter((d) => d.id !== id));
+  };
+
+  const handleSearch = async () => {
+    if (!searchQuery.trim()) return;
+    setSearching(true);
+    setSearchResults([]);
+
+    const supabase = createClient();
+    const { data } = await supabase
+      .from("kb_chunks")
+      .select("content,meta")
+      .or(
+        searchQuery.toLowerCase().split(" ").filter(Boolean)
+          .map((w) => `content.ilike.%${w}%`)
+          .join(",")
+      )
+      .limit(8);
+
+    setSearchResults((data as SearchResult[]) ?? []);
+    setSearching(false);
   };
 
   return (
-    <div className="space-y-6 pb-12 max-w-6xl">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Knowledge base</h1>
-        <p className="text-muted-foreground mt-1 text-sm max-w-3xl leading-relaxed">
-          Documents (PDF, DOCX, TXT, CSV, Excel) feed retrieval-augmented answers. FAQs add structured
-          facts. The AI test tab calls Gemini the same way voice STT text would after you wire RAG.
-        </p>
-      </div>
+    <div className="space-y-6 pb-16">
+      {/* Header */}
+      <motion.div
+        className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4"
+        initial={{ opacity: 0, y: -12 }}
+        animate={{ opacity: 1, y: 0 }}
+      >
+        <div>
+          <h1 className="text-2xl font-bold" style={{ fontFamily: "Syne, sans-serif" }}>Knowledge Base</h1>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            RAG pipeline — documents & connector data → embeddings → voice AI retrieval
+          </p>
+        </div>
+        <Button
+          onClick={() => fileRef.current?.click()}
+          disabled={uploading}
+          className="bg-[hsl(var(--cyan))] text-[hsl(var(--surface-0))] hover:bg-[hsl(var(--cyan))/90] gap-2 font-semibold"
+        >
+          {uploading ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
+          {uploading ? "Processing…" : "Upload Document"}
+        </Button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".txt,.md,.json,.csv,.html,.pdf"
+          className="hidden"
+          onChange={handleUpload}
+        />
+      </motion.div>
 
-      <Tabs defaultValue="documents" className="space-y-6">
-        <TabsList className="grid w-full max-w-lg grid-cols-3">
-          <TabsTrigger value="documents">Documents</TabsTrigger>
-          <TabsTrigger value="faqs">FAQs</TabsTrigger>
-          <TabsTrigger value="test">AI retrieval test</TabsTrigger>
-        </TabsList>
+      {/* Stats row */}
+      <motion.div
+        className="grid grid-cols-2 sm:grid-cols-4 gap-4"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ delay: 0.1 }}
+      >
+        {[
+          { label: "Documents", value: docs.length, icon: <FileText size={14} />, color: "cyan" },
+          { label: "Total Chunks", value: totalChunks.toLocaleString(), icon: <Activity size={14} />, color: "violet" },
+          { label: "Embeddings", value: "768-dim", icon: <Brain size={14} />, color: "emerald" },
+          { label: "Ready", value: docs.filter((d) => d.status === "ready").length, icon: <CheckCircle2 size={14} />, color: "amber" },
+        ].map((s) => (
+          <div key={s.label} className={cn(
+            "glass rounded-xl p-4 flex items-center gap-3",
+            s.color === "cyan" && "border-[hsl(var(--cyan))/20]",
+            s.color === "violet" && "border-[hsl(var(--violet))/20]",
+            s.color === "emerald" && "border-[hsl(var(--emerald))/20]",
+            s.color === "amber" && "border-[hsl(var(--amber))/20]",
+          )}>
+            <div className={cn(
+              "w-8 h-8 rounded-lg flex items-center justify-center",
+              s.color === "cyan" && "bg-[hsl(var(--cyan))/10] text-[hsl(var(--cyan))]",
+              s.color === "violet" && "bg-[hsl(var(--violet))/10] text-[hsl(var(--violet))]",
+              s.color === "emerald" && "bg-[hsl(var(--emerald))/10] text-[hsl(var(--emerald))]",
+              s.color === "amber" && "bg-[hsl(var(--amber))/10] text-[hsl(var(--amber))]",
+            )}>
+              {s.icon}
+            </div>
+            <div>
+              <p className="metric-value text-lg text-foreground">{s.value}</p>
+              <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">{s.label}</p>
+            </div>
+          </div>
+        ))}
+      </motion.div>
 
-        <TabsContent value="documents" className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="md:col-span-1 space-y-6">
-              <Card className="glass border-dashed border-2 border-primary/20 bg-primary/5 hover:bg-primary/10 transition-colors relative text-center">
-                <input
-                  type="file"
-                  accept=".pdf,.doc,.docx,.txt,.csv,.xlsx"
-                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                  onChange={handleUpload}
-                  disabled={uploading}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Document list */}
+        <motion.div
+          className="glass rounded-xl overflow-hidden"
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.15 }}
+        >
+          <div className="px-5 py-4 border-b border-border flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <BookOpen size={15} className="text-[hsl(var(--cyan))]" />
+              <h3 className="text-sm font-semibold" style={{ fontFamily: "Syne, sans-serif" }}>Documents</h3>
+            </div>
+            <Button variant="ghost" size="sm" className="h-7 text-xs gap-1 text-muted-foreground" onClick={loadDocs}>
+              <RefreshCw size={11} /> Refresh
+            </Button>
+          </div>
+
+          <div className="p-3 space-y-2 max-h-[480px] overflow-y-auto">
+            {loading ? (
+              <div className="space-y-2">
+                {[1, 2, 3].map((i) => (
+                  <div key={i} className="h-12 rounded-xl bg-[hsl(var(--surface-2))] animate-pulse" />
+                ))}
+              </div>
+            ) : docs.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-40 gap-3 text-center">
+                <BookOpen size={24} className="text-muted-foreground/40" />
+                <div>
+                  <p className="text-sm text-muted-foreground">No documents yet</p>
+                  <p className="text-xs text-muted-foreground/60 mt-0.5">Upload .txt, .md, .json, or .csv files</p>
+                </div>
+              </div>
+            ) : (
+              <AnimatePresence mode="popLayout">
+                {docs.map((doc) => (
+                  <DocCard
+                    key={doc.id}
+                    doc={doc}
+                    onIngest={handleIngest}
+                    onDelete={handleDelete}
+                    ingesting={ingestingId === doc.id}
+                  />
+                ))}
+              </AnimatePresence>
+            )}
+          </div>
+
+          {/* Pipeline info */}
+          <div className="px-5 py-3 border-t border-border bg-[hsl(var(--surface-0))]">
+            <p className="text-[10px] font-mono text-muted-foreground flex items-center gap-1.5">
+              <Zap size={9} className="text-[hsl(var(--cyan))]" />
+              Upload → auto-chunked → Gemini text-embedding-004 → pgvector → semantic retrieval
+            </p>
+          </div>
+        </motion.div>
+
+        {/* Semantic search tester */}
+        <motion.div
+          className="glass rounded-xl overflow-hidden"
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.2 }}
+        >
+          <div className="px-5 py-4 border-b border-border flex items-center gap-2">
+            <Search size={15} className="text-[hsl(var(--violet))]" />
+            <h3 className="text-sm font-semibold" style={{ fontFamily: "Syne, sans-serif" }}>
+              Knowledge Search Tester
+            </h3>
+            <Badge className="text-[10px] font-mono bg-[hsl(var(--violet))/10] text-[hsl(var(--violet))] border-[hsl(var(--violet))/30] ml-auto">
+              RAG Debug
+            </Badge>
+          </div>
+
+          <div className="p-4 space-y-4">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-mono text-muted-foreground uppercase">Test Query</Label>
+              <div className="flex gap-2">
+                <Input
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+                  placeholder="Can you tell me order number 2415 details?"
+                  className="bg-[hsl(var(--surface-2))] border-border flex-1"
                 />
-                <CardContent className="py-12 flex flex-col items-center justify-center space-y-4 pointer-events-none">
-                  <div className="p-4 bg-background rounded-full shadow-sm">
-                    {uploading ? (
-                      <Loader2 className="w-8 h-8 text-primary animate-spin" />
-                    ) : (
-                      <UploadCloud className="w-8 h-8 text-primary" />
-                    )}
-                  </div>
-                  <div className="space-y-1">
-                    <h3 className="font-medium text-lg">
-                      {uploading ? "Uploading…" : "Drag & drop or click"}
-                    </h3>
-                    <p className="text-sm text-muted-foreground">PDF, DOCX, TXT, CSV, XLSX</p>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card className="glass">
-                <CardHeader>
-                  <CardTitle className="text-sm flex items-center gap-2">
-                    <Layers className="w-4 h-4" /> Chunk pipeline (preview)
-                  </CardTitle>
-                  <CardDescription>Visual status for investor demos — wire workers in production.</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="space-y-2">
-                    <div className="flex justify-between text-xs">
-                      <span>Parse & chunk</span>
-                      <span className="text-primary">Done</span>
-                    </div>
-                    <Progress value={100} className="h-1.5" />
-                  </div>
-                  <div className="space-y-2">
-                    <div className="flex justify-between text-xs">
-                      <span>Embeddings</span>
-                      <span className="text-muted-foreground">Queue</span>
-                    </div>
-                    <Progress value={files.length ? 60 : 10} className="h-1.5" />
-                  </div>
-                  <div className="flex justify-between text-sm pt-2">
-                    <span className="text-muted-foreground">Files in bucket</span>
-                    <span className="font-mono">{files.length}</span>
-                  </div>
-                </CardContent>
-              </Card>
+                <Button
+                  onClick={handleSearch}
+                  disabled={searching || !searchQuery.trim()}
+                  className="bg-[hsl(var(--violet))/20] text-[hsl(var(--violet))] hover:bg-[hsl(var(--violet))/30] border border-[hsl(var(--violet))/30] gap-1.5"
+                >
+                  {searching ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
+                  Search
+                </Button>
+              </div>
+              <p className="text-[10px] text-muted-foreground font-mono">
+                Simulates what AI retrieves when a caller asks this question
+              </p>
             </div>
 
-            <div className="md:col-span-2 space-y-4">
-              <h3 className="text-lg font-semibold flex items-center gap-2">
-                <FileText className="w-5 h-5" /> Searchable library
-              </h3>
-              {loading ? (
-                <div className="p-8 text-center">
-                  <Loader2 className="w-6 h-6 animate-spin mx-auto text-primary" />
+            <div className="space-y-2 max-h-[380px] overflow-y-auto">
+              {searching ? (
+                <div className="flex items-center justify-center h-24 gap-2 text-muted-foreground">
+                  <Loader2 size={16} className="animate-spin" />
+                  <span className="text-sm">Searching knowledge base…</span>
+                </div>
+              ) : searchResults.length > 0 ? (
+                searchResults.map((result, i) => (
+                  <motion.div
+                    key={i}
+                    initial={{ opacity: 0, x: -8 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: i * 0.05 }}
+                    className="rounded-xl bg-[hsl(var(--surface-2))] p-3 space-y-2"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <Eye size={11} className="text-[hsl(var(--violet))]" />
+                        <span className="text-[10px] font-mono text-[hsl(var(--violet))]">Chunk {i + 1}</span>
+                      </div>
+                      {result.similarity !== undefined && (
+                        <Badge className="text-[9px] font-mono bg-[hsl(var(--emerald))/10] text-[hsl(var(--emerald))] border-[hsl(var(--emerald))/30]">
+                          {(result.similarity * 100).toFixed(1)}% match
+                        </Badge>
+                      )}
+                      {Boolean(result.meta?.connector_name) && (
+                        <Badge variant="outline" className="text-[9px] font-mono text-muted-foreground border-border">
+                          {String(result.meta?.connector_name ?? "")}
+                        </Badge>
+                      )}
+                    </div>
+                    <p className="text-xs text-foreground leading-relaxed">{result.content}</p>
+                  </motion.div>
+                ))
+              ) : searchQuery && !searching ? (
+                <div className="flex flex-col items-center justify-center h-24 gap-2 text-center">
+                  <AlertTriangle size={20} className="text-muted-foreground/40" />
+                  <p className="text-sm text-muted-foreground">No chunks found for this query</p>
+                  <p className="text-xs text-muted-foreground/60">Upload documents or sync a connector first</p>
                 </div>
               ) : (
-                files.map((file, idx) => (
-                  <Card key={idx} className="glass flex flex-row items-center justify-between p-4 flex-wrap gap-4">
-                    <div className="flex items-center gap-4">
-                      <div className="w-10 h-10 rounded bg-muted flex items-center justify-center">
-                        <FileText className="w-5 h-5 text-muted-foreground" />
-                      </div>
-                      <div>
-                        <h4 className="font-medium text-sm break-all max-w-[220px] sm:max-w-md">{file.name}</h4>
-                        <span className="text-xs text-muted-foreground">
-                          Uploaded {new Date(file.created_at).toLocaleDateString()}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Badge variant="outline" className="border-primary/50 text-primary bg-primary/5">
-                        Indexed
-                      </Badge>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => handleDelete(file.name)}
-                        className="text-destructive hover:bg-destructive/10"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
-                    </div>
-                  </Card>
-                ))
-              )}
-              {!loading && files.length === 0 && (
-                <div className="p-8 text-center border rounded-xl border-dashed border-border text-muted-foreground text-sm">
-                  No files yet — upload a policy PDF to light up the pipeline.
+                <div className="rounded-xl bg-[hsl(var(--surface-0))] p-4 text-xs text-muted-foreground space-y-2 font-mono">
+                  <p className="text-[hsl(var(--cyan))] font-semibold">// Why did AI say that?</p>
+                  <p>Use this tester to debug what the AI retrieves before answering a caller.</p>
+                  <p>Try: &quot;order number 2415&quot; or &quot;payment due&quot; or &quot;delivery status&quot;</p>
                 </div>
               )}
             </div>
           </div>
-        </TabsContent>
+        </motion.div>
+      </div>
 
-        <TabsContent value="faqs" className="space-y-4">
-          <Card className="glass">
-            <CardHeader>
-              <CardTitle className="text-base">FAQ manager</CardTitle>
-              <CardDescription>Short answers the AI can quote verbatim on voice or chat.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="space-y-2 sm:col-span-2">
-                  <label className="text-sm font-medium">Question</label>
-                  <Input value={newQ} onChange={(e) => setNewQ(e.target.value)} placeholder="Shipping time to Chittagong?" />
-                </div>
-                <div className="space-y-2 sm:col-span-2">
-                  <label className="text-sm font-medium">Answer</label>
-                  <Textarea rows={3} value={newA} onChange={(e) => setNewA(e.target.value)} />
-                </div>
-                <Button
-                  type="button"
-                  onClick={() => {
-                    if (!newQ.trim() || !newA.trim()) return;
-                    setFaqs((f) => [...f, { id: Date.now().toString(), q: newQ.trim(), a: newA.trim() }]);
-                    setNewQ("");
-                    setNewA("");
-                    toast({ title: "FAQ added", description: "Persist to Supabase table in production." });
-                  }}
-                >
-                  Add FAQ
-                </Button>
+      {/* Upload guidelines */}
+      <motion.div
+        className="glass rounded-xl p-5"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ delay: 0.3 }}
+      >
+        <div className="flex items-center gap-2 mb-3">
+          <Activity size={14} className="text-[hsl(var(--amber))]" />
+          <h3 className="text-sm font-semibold" style={{ fontFamily: "Syne, sans-serif" }}>Ingestion Pipeline</h3>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          {[
+            {
+              step: "1. Upload",
+              desc: "Upload .txt, .md, .json, .csv documents. Files are stored in Supabase Storage.",
+              icon: <Upload size={16} />, color: "cyan",
+            },
+            {
+              step: "2. Chunk + Embed",
+              desc: "Documents are split into smart chunks (1000 chars, 100 overlap). Each chunk gets a Gemini text-embedding-004 vector.",
+              icon: <Zap size={16} />, color: "violet",
+            },
+            {
+              step: "3. AI Retrieval",
+              desc: "During live calls, caller questions are embedded and cosine-similarity matched to find the most relevant chunks before Gemini answers.",
+              icon: <Brain size={16} />, color: "emerald",
+            },
+          ].map((s) => (
+            <div key={s.step} className="space-y-2">
+              <div className={cn(
+                "w-8 h-8 rounded-lg flex items-center justify-center",
+                s.color === "cyan" && "bg-[hsl(var(--cyan))/10] text-[hsl(var(--cyan))]",
+                s.color === "violet" && "bg-[hsl(var(--violet))/10] text-[hsl(var(--violet))]",
+                s.color === "emerald" && "bg-[hsl(var(--emerald))/10] text-[hsl(var(--emerald))]",
+              )}>
+                {s.icon}
               </div>
-              <ul className="divide-y divide-border rounded-lg border">
-                {faqs.map((f) => (
-                  <li key={f.id} className="p-4 space-y-1">
-                    <p className="font-medium text-sm">{f.q}</p>
-                    <p className="text-sm text-muted-foreground">{f.a}</p>
-                  </li>
-                ))}
-              </ul>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="test" className="space-y-4">
-          <Card className="glass">
-            <CardHeader>
-              <CardTitle className="text-base flex items-center gap-2">
-                <Search className="w-4 h-4" /> AI answer test
-              </CardTitle>
-              <CardDescription>Uses the same Gemini route as live voice text turns.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <Textarea
-                rows={4}
-                value={retrievalQ}
-                onChange={(e) => setRetrievalQ(e.target.value)}
-                placeholder="Ask a question that should use your docs + CRM context…"
-              />
-              <Button type="button" onClick={runRetrievalTest} disabled={retrievalBusy}>
-                {retrievalBusy ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <MessageSquare className="h-4 w-4 mr-2" />}
-                Run test
-              </Button>
-              {retrievalOut && (
-                <div className="rounded-lg border bg-muted/30 p-4 text-sm whitespace-pre-wrap">{retrievalOut}</div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
+              <p className="text-xs font-semibold text-foreground font-mono">{s.step}</p>
+              <p className="text-xs text-muted-foreground leading-relaxed">{s.desc}</p>
+            </div>
+          ))}
+        </div>
+      </motion.div>
     </div>
   );
 }

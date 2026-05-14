@@ -1,30 +1,11 @@
 import type { Metadata } from "next";
-import localFont from "next/font/local";
 import "./globals.css";
-import { Inter } from "next/font/google";
-import { cn } from "@/lib/utils";
-
-const geist = Inter({ subsets: ['latin'], variable: '--font-sans' });
-
-const geistSans = localFont({
-  src: "./fonts/GeistVF.woff",
-  variable: "--font-geist-sans",
-  weight: "100 900",
-});
-const geistMono = localFont({
-  src: "./fonts/GeistMonoVF.woff",
-  variable: "--font-geist-mono",
-  weight: "100 900",
-});
+import { Toaster } from "@/components/ui/toaster";
 
 export const metadata: Metadata = {
-  title: "AI CRM Agent - Minimum Viable Product",
-  description: "AI-powered CRM Agent SaaS platform",
+  title: "NeuralCRM — AI Voice Operations Platform",
+  description: "Real-time AI CRM voice agent platform powered by Gemini and Twilio",
 };
-
-import { Sidebar } from "@/components/layout/Sidebar";
-import { TopNav } from "@/components/layout/TopNav";
-import { Toaster } from "@/components/ui/toaster";
 
 export default function RootLayout({
   children,
@@ -32,8 +13,12 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={cn("font-sans dark", geist.variable)}>
-      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+    <html lang="en" className="dark" suppressHydrationWarning>
+      <head>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+      </head>
+      <body className="antialiased min-h-screen">
         {children}
         <Toaster />
       </body>

@@ -20,6 +20,9 @@ export async function GET() {
       geminiKeySet: Boolean(process.env.GOOGLE_GEMINI_API_KEY),
       supabaseServiceRoleSet: Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY),
       signatureVerifySkipped: process.env.TWILIO_SKIP_SIGNATURE_VERIFY === "true",
+      smokeSecretConfigured: Boolean(
+        process.env.VOICE_WEBHOOK_SMOKE_SECRET && process.env.VOICE_WEBHOOK_SMOKE_SECRET.trim().length >= 24
+      ),
       dtmfMenuEnabled: process.env.TWILIO_VOICE_DTMF_MENU === "true",
     },
     urls: {
@@ -32,7 +35,7 @@ export async function GET() {
       "If voiceWebhookUrl is null, set TWILIO_WEBHOOK_BASE_URL in .env.local (no trailing slash) and restart next dev.",
       "Twilio Console voice URL must match voiceWebhookUrl character-for-character (https, host, path).",
       "If the Console shows https://webhooks.twilio.com/.../Flows/FW… that is Twilio Studio: the call never hits your Next.js app until you change “A call comes in” to Webhook → your https://<host>/api/webhooks/voice/inbound, or add a Studio “TwiML Redirect” widget to that URL.",
-      "If Debugger shows HTTP 403 on /voice/inbound, signature failed: fix base URL + TWILIO_AUTH_TOKEN, or temporarily set TWILIO_SKIP_SIGNATURE_VERIFY=true only while debugging.",
+      "If Debugger shows HTTP 403 on /voice/inbound, signature failed: fix base URL + TWILIO_AUTH_TOKEN, set VOICE_WEBHOOK_SMOKE_SECRET and send X-Voice-Webhook-Smoke-Secret for curl tests, or temporarily set TWILIO_SKIP_SIGNATURE_VERIFY=true only while debugging.",
       "If Debugger shows no request to your host, the number is still pointing at Studio or another URL.",
     ],
   });

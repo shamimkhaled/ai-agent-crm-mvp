@@ -245,15 +245,10 @@ export default function LiveCallMonitorPage() {
       {/* ═══ Page header ═══════════════════════════════════════════════════ */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
-            <span className="relative flex h-3 w-3 mr-1">
-              {live.sessions.length > 0 && (
-                <>
-                  <span className="animate-ping absolute h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                  <span className="relative rounded-full h-3 w-3 bg-emerald-500" />
-                </>
-              )}
-            </span>
+          <h1 className="text-2xl font-bold flex items-center gap-2" style={{ fontFamily: "Syne, sans-serif" }}>
+            {live.sessions.length > 0 && (
+              <span className="status-dot live" />
+            )}
             Live Call Monitor
           </h1>
           <p className="text-muted-foreground text-sm mt-1 max-w-2xl">

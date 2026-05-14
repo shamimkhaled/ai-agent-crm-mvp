@@ -2,8 +2,9 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import {
   twilioFormBodyToRecord,
-  validateTwilioSignature,
+  validateTwilioSignatureAnyCandidate,
   twilioWebhookRequestUrl,
+  isVoiceWebhookSmokeAuthorized,
 } from "@/lib/twilio/signature";
 import { insertVoiceCallTranscript, insertVoicePipelineEvent, updateCallSessionStatus } from "@/lib/twilio/callSessionSupabase";
 
@@ -21,8 +22,11 @@ export async function POST(req: NextRequest) {
   const skip = process.env.TWILIO_SKIP_SIGNATURE_VERIFY === "true";
 
   if (authToken && !skip) {
-    const ok = validateTwilioSignature(requestUrl, params, sig, authToken);
-    if (!ok) return new NextResponse("Forbidden", { status: 403 });
+    const smokeOk = isVoiceWebhookSmokeAuthorized(req);
+    if (!smokeOk) {
+      const ok = validateTwilioSignatureAnyCandidate(req, params, sig, authToken);
+      if (!ok) return new NextResponse("Forbidden", { status: 403 });
+    }
   }
 
   const { CallSid, CallStatus, From, To, CallDuration } = params;
