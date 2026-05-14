@@ -362,9 +362,12 @@ export default function VoiceTestingPage() {
   async function transcribeWithBrowserSTT(blob: Blob): Promise<string> {
     // Use Web Speech API for browser-side STT testing
     return new Promise((resolve, reject) => {
-      const SpeechRecognition =
-        (window as unknown as { SpeechRecognition?: typeof window.SpeechRecognition; webkitSpeechRecognition?: typeof window.SpeechRecognition }).SpeechRecognition ||
-        (window as unknown as { SpeechRecognition?: typeof window.SpeechRecognition; webkitSpeechRecognition?: typeof window.SpeechRecognition }).webkitSpeechRecognition;
+      type SpeechRecognitionCtor = new () => unknown;
+      const w = window as Window & {
+        SpeechRecognition?: SpeechRecognitionCtor;
+        webkitSpeechRecognition?: SpeechRecognitionCtor;
+      };
+      const SpeechRecognition = w.SpeechRecognition ?? w.webkitSpeechRecognition;
 
       if (!SpeechRecognition) {
         // Fallback: ask user to type

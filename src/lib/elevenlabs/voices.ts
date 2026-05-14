@@ -224,6 +224,12 @@ export const MULTILINGUAL_VOICES: VoiceOption[] = [
   },
 ];
 
+/** Curated static list for settings UIs (e.g. voice testing). Multilingual first, then English. Runtime clones: `getAllVoices()`. */
+export const ELEVENLABS_CURATED_VOICES: VoiceOption[] = [
+  ...MULTILINGUAL_VOICES,
+  ...ENGLISH_VOICES,
+];
+
 // ============================================================
 // Custom / Cloned Bangla voices (add your clones here)
 // ============================================================

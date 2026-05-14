@@ -150,7 +150,7 @@ export class ElevenLabsSTTStream extends EventEmitter {
   private handleMessage(data: Buffer | string): void {
     try {
       const event = JSON.parse(
-        data instanceof Buffer ? data.toString() : data
+        Buffer.isBuffer(data) ? data.toString("utf8") : data
       ) as {
         type?: string;
         text?: string;
@@ -218,8 +218,8 @@ export class ElevenLabsSTTStream extends EventEmitter {
   }
 }
 
-// Override emit for typed events
-declare interface ElevenLabsSTTStream {
+// Typed event signatures (merged with class — must also be exported)
+export interface ElevenLabsSTTStream {
   on(
     event: "transcript",
     listener: (
