@@ -45,11 +45,12 @@ export async function POST(req: NextRequest) {
     const apiKey = await getElevenLabsApiKey();
     const audioBuffer = await previewVoice(apiKey, voiceId, text, model);
 
-    return new NextResponse(audioBuffer, {
+    const body = new Uint8Array(audioBuffer);
+    return new NextResponse(body, {
       status: 200,
       headers: {
         "Content-Type": "audio/mpeg",
-        "Content-Length": String(audioBuffer.byteLength),
+        "Content-Length": String(body.byteLength),
         "Cache-Control": "private, max-age=300",
         "X-Voice-Id": voiceId,
       },
